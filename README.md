@@ -194,7 +194,7 @@ python -m pytest -v
 ### 7.2 Leave-One-Corridor-Out (LOCO) Generalization Benchmark
 To evaluate model transfer to completely unseen trade corridors, each corridor is held out in turn while the pipeline is trained exclusively on the remaining 4 corridors:
 
-| Held-Out Corridor | N | Baseline MAE | Direct GBDT MAE | Residual GBDT MAE | Residual vs. Base |
+| Held-Out Corridor | N | Baseline MAE | Direct GBDT Benchmark MAE | Final Residual GBDT MAE | Residual vs. Base |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **BEANR-USNYC** (3,450 nm) | 50 | 10.769 h | 10.766 h (+0.0%) | **5.715 h** | **+46.9%** |
 | **CNSHA-USLAX** (5,700 nm) | 50 | 11.037 h | 8.531 h (+22.7%) | **4.772 h** | **+56.8%** |
@@ -203,9 +203,9 @@ To evaluate model transfer to completely unseen trade corridors, each corridor i
 | **SGSIN-NLRTM** (8,300 nm) | 50 | 9.186 h | 10.585 h (-15.2%) | **5.714 h** | **+37.8%** |
 | **Macro Average** | 250 | 10.310 h | 11.483 h (-11.4%) | **5.235 h** | **+49.2%** |
 
-*Root Cause Analysis & Residual Resolution:*
-- **The Deficit in Direct GBDT:** Direct GBDT suffered from negative transfer on the regional feeder lane `KRPUS-JPYOK` (-142.2% error surge), dragging macro MAE to 11.483h (-11.4% worse than baseline). Because tree ensembles cannot predict below the lowest target values seen in training ($y_{\text{train}} \in [55, 115\text{h}]$ vs. feeder allowance $44\text{h}$), the model suffered from leaf bounding bias.
-- **The Residual Resolution:** Reformulating the target as scheduled residual $\Delta_{\text{rem}} = y_{\text{actual}} - y_{\text{sched}}$ centers predictions around route-specific scheduled allowances ($\Delta_{\text{rem}} \approx [-4, +40\text{h}]$ in this benchmark). On this synthetic five-corridor experiment, Residual GBDT overcame the feeder extrapolation deficit observed with direct trees, outperforming the scheduled baseline across **all 5 out of 5 corridors (100% win rate)** with a Macro MAE of **5.235h (+49.2% improvement)** and Macro RMSE of **6.778h (+58.7% improvement)**. *Note: These results reflect observed behavior on this synthetic 5-corridor simulation and do not constitute a universal generalization guarantee on live maritime networks.*
+*Direct Benchmark vs. Final Residual Model:*
+- **Historical Direct GBDT Benchmark:** Suffered from negative transfer on the regional feeder lane `KRPUS-JPYOK` (-142.2% error surge: 20.779h vs. 8.578h baseline), dragging macro MAE to 11.483h (-11.4% worse than baseline). Because tree ensembles cannot predict below the lowest target values seen in training ($y_{\text{train}} \in [55, 115\text{h}]$ vs. feeder allowance $44\text{h}$), the direct model suffered from leaf bounding bias.
+- **Final Residual GBDT Model:** Reformulating the target as scheduled residual $\Delta_{\text{rem}} = y_{\text{actual}} - y_{\text{sched}}$ centers predictions around route-specific scheduled allowances ($\Delta_{\text{rem}} \approx [-4, +40\text{h}]$ in this benchmark). On this synthetic five-corridor experiment, Residual GBDT overcame the feeder extrapolation deficit observed with direct trees (4.459h vs. 8.578h base) and outperformed the scheduled baseline across **all 5 out of 5 corridors (100% win rate)** with a Macro MAE of **5.235h (+49.2% improvement)** and Macro RMSE of **6.778h (+58.7% improvement)**. *Note: These results reflect observed behavior on this synthetic 5-corridor simulation and do not constitute a universal generalization guarantee on live maritime networks.*
 
 ### 7.3 Customs Feature Ablation & Controlled Disruption Scenarios
 - **Feature Ablation on `customs_inspection_flag`:** Removing the advance customs hold indicator increases test MAE from **5.921h to 11.599h (+95.9%)** and RMSE from **7.237h to 15.766h (+117.9%)**, causing the model to perform worse than the scheduled baseline (10.608h MAE). This confirms that advance regulatory notice is the dominant determinant of terminal dwell variance.
@@ -229,16 +229,18 @@ The explainer engine (`src/shipment_explainer.py`) provides transparent, auditab
 ### 7.5 Repeated-Seed Stability Evaluation (10 Deterministic Runs)
 To evaluate algorithmic stability across stochastic variations in synthetic journey realization, the pipeline was evaluated across 10 deterministic random seeds ($N=250$ shipments per run, 80/20 chronological split, total 2,500 simulated shipments):
 
-| Metric | Scheduled Baseline | Direct GBDT | Residual GBDT | Res. vs. Base |
+| Metric | Scheduled Baseline | Direct GBDT Benchmark | Final Residual GBDT | Res. vs. Base (Mean Per-Seed) |
 | :--- | :---: | :---: | :---: | :---: |
-| **MAE (hours)** | 10.643 +/- 1.928 hrs | 4.915 +/- 0.608 hrs | **4.678 +/- 0.405 hrs** | **+55.2%** (std: 5.8%) |
-| **RMSE (hours)** | 16.738 +/- 2.491 hrs | 6.436 +/- 0.798 hrs | **6.054 +/- 0.464 hrs** | **+63.3%** (std: 4.1%) |
-| **Delay Risk F1 ($	au=6\text{h}$)** | 0.706 +/- 0.094 | 0.883 +/- 0.046 | **0.894 +/- 0.045** | **+26.6%** |
+| **MAE (hours)** | 10.643 +/- 1.928 hrs | 4.915 +/- 0.608 hrs | **4.678 +/- 0.405 hrs** | **+55.2%** (pop std: 5.8%) |
+| **RMSE (hours)** | 16.738 +/- 2.491 hrs | 6.436 +/- 0.798 hrs | **6.054 +/- 0.464 hrs** | **+63.3%** (pop std: 4.1%) |
+| **Delay Risk F1 ($\tau=6\text{h}$)** | 0.706 +/- 0.094 | 0.883 +/- 0.046 | **0.894 +/- 0.045** | **+26.6%** |
 | **Delay Risk Precision** | 0.846 +/- 0.082 | 0.906 +/- 0.042 | **0.907 +/- 0.041** | — |
 | **Delay Risk Recall** | 0.612 +/- 0.115 | 0.866 +/- 0.081 | **0.886 +/- 0.076** | — |
 
 - **Win Count:** Both Direct and Residual GBDT achieved lower MAE than the scheduled baseline in **10 out of 10 runs (100.0%)**. Residual GBDT exhibited tighter standard deviations and superior generalization across every seed.
-- **Improvement Formula & Convention:** Reductions are evaluated per seed as `((baseline - model) / baseline) * 100`. For MAE, Residual GBDT achieves a mean per-seed reduction of **+55.2% (std: 5.8%)** (Direct: **+53.0% (std: 6.5%)**), while aggregate mean MAE yields 56.0% and 53.8%. For RMSE, Residual GBDT achieves a mean per-seed reduction of **+63.3% (std: 4.1%)** (Direct: **+61.1% (std: 5.1%)**), while aggregate mean RMSE yields 63.8% and 61.5%.
+- **Improvement Terminology & Calculation Methods:** Reductions are evaluated per seed as `((baseline - model) / baseline) * 100`. Both calculation methods are distinguished to prevent silent conflation:
+  - **MAE:** Mean per-seed reduction is **+55.2%** (population standard deviation **5.8%**; Direct: **+53.0%**, pop std: 6.5%); aggregate mean reduction is **56.0%** (Direct: 53.8%).
+  - **RMSE:** Mean per-seed reduction is **+63.3%** (population standard deviation **4.1%**; Direct: **+61.1%**, pop std: 5.1%); aggregate mean reduction is **63.8%** (Direct: 61.5%).
 - **Model MAE Range:** Minimum MAE = 3.968 hrs, Maximum MAE = 5.921 hrs (Seed 42).
 - **Seeds Evaluated:** `[42, 101, 202, 303, 404, 505, 606, 707, 808, 909]`.
 

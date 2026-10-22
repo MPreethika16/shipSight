@@ -168,7 +168,7 @@ Tracking cumulative delay $D_k = D_{k-1} + \delta_k$ across all 250 journeys:
 ### Unseen-Corridor Generalization (LOCO Cross-Validation)
 Holding out each corridor in turn evaluates out-of-distribution route transfer across all 5 corridors:
 
-| Held-Out Corridor | Baseline MAE | Direct GBDT MAE | Residual GBDT MAE | Residual vs. Base |
+| Held-Out Corridor | Baseline MAE | Direct GBDT Benchmark MAE | Final Residual GBDT MAE | Residual vs. Base |
 | :--- | :---: | :---: | :---: | :---: |
 | **BEANR-USNYC** (3,450 nm) | 10.769 hrs | 10.766 hrs (+0.0%) | **5.715 hrs** | **+46.9%** |
 | **CNSHA-USLAX** (5,700 nm) | 11.037 hrs | 8.531 hrs (+22.7%) | **4.772 hrs** | **+56.8%** |
@@ -177,7 +177,7 @@ Holding out each corridor in turn evaluates out-of-distribution route transfer a
 | **SGSIN-NLRTM** (8,300 nm) | 9.186 hrs | 10.585 hrs (-15.2%) | **5.714 hrs** | **+37.8%** |
 | **Macro Average** | 10.310 hrs | 11.483 hrs (-11.4%) | **5.235 hrs** | **+49.2%** |
 
-*Root Cause Analysis & Residual Resolution:* Direct GBDT failed on feeder `KRPUS-JPYOK` (-142.2% deficit) because decision trees cannot extrapolate below the minimum leaf targets observed in training ($y_{\text{train}} \in [55, 115\text{h}]$ vs. feeder allowance $44\text{h}$). By reformulating the target as schedule residual $\Delta_{\text{rem}}$, targets reflect zero-centered downstream slippage ($\Delta_{\text{rem}} \approx [-4, +40\text{h}]$ in this benchmark) rather than route distance. In this experiment, Residual GBDT resolved the feeder extrapolation deficit (4.459h vs. 8.578h base) and outperformed the scheduled baseline across all 5 evaluated corridors, improving macro MAE by **+49.2%** and macro RMSE by **+58.7%** (6.778h vs. 16.394h). These gains reflect parametric behavior in this 5-corridor simulation and do not constitute universal real-world generalization guarantees.
+*Direct Benchmark vs. Final Residual Model:* In the historical direct-model benchmark, GBDT failed on regional feeder `KRPUS-JPYOK` (-142.2% deficit) due to tree leaf bounding below training targets ($y_{\text{train}} \in [55, 115\text{h}]$ vs. feeder allowance $44\text{h}$). In contrast, the final Residual GBDT reformulates the target as schedule deviation $\Delta_{\text{rem}}$, overcoming the feeder deficit (4.459h vs. 8.578h base) and outperforming baseline on all 5 corridors (+49.2% macro MAE, +58.7% macro RMSE: 6.778h vs. 16.394h). These gains reflect parametric behavior on this 5-corridor simulation and do not constitute universal real-world generalization guarantees.
 
 ### Customs Feature Ablation & Controlled Disruption
 - **Ablation:** Omitting `customs_inspection_flag` inflates test MAE from 5.921h to 11.599h (+95.9%) and RMSE from 7.237h to 15.766h (+117.9%), dropping delay-risk F1 from 0.811 to 0.605. Without advance manifest notice, the model performs worse than the scheduled baseline (10.608h MAE).
@@ -192,9 +192,9 @@ ShipSight provides auditable shipment-level explanations (`src/shipment_explaine
 ### Repeated-Seed Stability Evaluation (10 Deterministic Runs)
 Across 10 random seeds ($N=2,500$ shipments total, 80/20 chronological split per seed):
 - **Baseline:** MAE = $10.643 \pm 1.928\text{h}$, RMSE = $16.738 \pm 2.491\text{h}$, Delay-Risk F1 = $0.706 \pm 0.094$.
-- **Direct GBDT:** MAE = $4.915 \pm 0.608\text{h}$ (**+53.0%** mean reduction, $\text{std}: 6.5\%$), RMSE = $6.436 \pm 0.798\text{h}$ (**+61.1%** mean reduction, $\text{std}: 5.1\%$), Delay-Risk F1 = $0.883 \pm 0.046$.
-- **Residual GBDT:** MAE = **$4.678 \pm 0.405\text{h}$** (**+55.2%** mean reduction, $\text{std}: 5.8\%$), RMSE = **$6.054 \pm 0.464\text{h}$** (**+63.3%** mean reduction, $\text{std}: 4.1\%$), Delay-Risk F1 = **$0.894 \pm 0.045$**. Both ML models beat the scheduled baseline on MAE in **10 out of 10 runs (100%)**.
-*(Note: Reductions are evaluated per seed as `((baseline - model) / baseline) * 100`. Mean per-seed MAE reduction is $+55.2\% \pm 5.8\%$ for Residual and $+53.0\% \pm 6.5\%$ for Direct; evaluating aggregate mean MAEs yields $56.0\%$ and $53.8\%$. Mean per-seed RMSE reduction is $+63.3\% \pm 4.1\%$ for Residual and $+61.1\% \pm 5.1\%$ for Direct; evaluating aggregate mean RMSEs yields $63.8\%$ and $61.5\%$.)*
+- **Direct GBDT Benchmark:** MAE = $4.915 \pm 0.608\text{h}$ (**+53.0%** mean reduction, $\text{std}: 6.5\%$), RMSE = $6.436 \pm 0.798\text{h}$ (**+61.1%** mean reduction, $\text{std}: 5.1\%$), Delay-Risk F1 = $0.883 \pm 0.046$.
+- **Final Residual GBDT:** MAE = **$4.678 \pm 0.405\text{h}$** (**+55.2%** mean reduction, $\text{std}: 5.8\%$), RMSE = **$6.054 \pm 0.464\text{h}$** (**+63.3%** mean reduction, $\text{std}: 4.1\%$), Delay-Risk F1 = **$0.894 \pm 0.045$**. Both ML models beat the scheduled baseline on MAE in **10 out of 10 runs (100%)**.
+*(Note: Evaluated per seed as `((baseline - model) / baseline) * 100`. MAE: mean per-seed reduction +55.2% (population standard deviation 5.8%); aggregate mean reduction 56.0%. RMSE: mean per-seed reduction +63.3% (population standard deviation 4.1%); aggregate mean reduction 63.8%. These two calculation methods are distinguished to prevent silent conflation.)*
 
 ---
 
