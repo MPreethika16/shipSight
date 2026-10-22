@@ -1,7 +1,7 @@
 # ShipSight: Explainable ETA and Multi-Stage Delay Intelligence
 
 [![CI](https://github.com/MPreethika16/shipSight/actions/workflows/ci.yml/badge.svg)](https://github.com/MPreethika16/shipSight/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-17%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)]()
 
@@ -96,13 +96,15 @@ shipsight/
 │   ├── propagation_analysis.py       # Stage delay transmission analytics
 │   ├── corridor_evaluation.py        # Leave-one-corridor-out cross-validation
 │   ├── shipment_explainer.py         # Individual shipment prediction explanations
-│   └── ablation_and_scenarios.py     # Customs feature ablation & disruption analysis
+│   ├── ablation_and_scenarios.py     # Customs feature ablation & disruption analysis
+│   └── repeated_seed_evaluation.py   # Multi-seed stability evaluation (10 seeds)
 ├── tests/
 │   ├── __init__.py
 │   ├── test_pipeline.py              # Core pipeline unit tests (8 tests)
 │   ├── test_corridor_evaluation.py   # Corridor isolation & LOCO tests (3 tests)
 │   ├── test_shipment_explainer.py    # Shipment explanation invariant tests (3 tests)
-│   └── test_ablation_and_scenarios.py# Ablation & scenario reproducibility (3 tests)
+│   ├── test_ablation_and_scenarios.py# Ablation & scenario reproducibility (3 tests)
+│   └── test_repeated_seeds.py        # Multi-seed determinism & win count tests (4 tests)
 ├── run_pipeline.py                   # Master end-to-end execution runner
 ├── convert_report_to_pdf.py          # Standalone headless PDF generator
 ├── requirements.txt                  # Python package dependencies
@@ -122,27 +124,31 @@ pip install -r requirements.txt
 ```
 
 ### Run End-to-End Pipeline
-Executes data generation, unit tests, model training, evaluation, and delay-propagation analysis:
+Executes data generation, unit tests, model training, repeated-seed evaluation, and delay-propagation analysis:
 ```bash
 python run_pipeline.py
 ```
 
 ### Run Test Suite Independently
-Executes all 17 automated unit tests across core pipeline, corridor isolation, shipment explainer, and disruption scenarios:
+Executes all 21 automated unit tests across core pipeline, corridor isolation, shipment explainer, disruption scenarios, and repeated seeds:
 ```bash
 python -m pytest -v
 ```
 
 ### Run Extended Evaluation Modules
-1. **Leave-One-Corridor-Out (LOCO) Generalization:**
+1. **Repeated-Seed Stability Evaluation (10 Seeds):**
+   ```bash
+   python -m src.repeated_seed_evaluation
+   ```
+2. **Leave-One-Corridor-Out (LOCO) Generalization:**
    ```bash
    python -m src.corridor_evaluation
    ```
-2. **Customs Feature Ablation & Disruption Scenarios:**
+3. **Customs Feature Ablation & Disruption Scenarios:**
    ```bash
    python -m src.ablation_and_scenarios
    ```
-3. **Inspect Individual Shipment Explanation:**
+4. **Inspect Individual Shipment Explanation:**
    ```bash
    python -c "from src.generator import generate_synthetic_shipments; from src.model import split_chronological, build_feature_matrix, build_pipeline; from src.shipment_explainer import explain_shipment, format_shipment_explanation; import pandas as pd; records = generate_synthetic_shipments(250, 42); train, test = split_chronological(records); X, y, _, _ = build_feature_matrix(train); p = build_pipeline().fit(pd.DataFrame(X), y); print(format_shipment_explanation(explain_shipment(test[0], p)))"
    ```
@@ -208,6 +214,21 @@ The explainer engine (`src/shipment_explainer.py`) deconstructs individual predi
 - Reports predicted final ETA ($\widehat{\text{ETA}} = T_2^{\text{actual}} + \hat{y}_{\text{rem}}$) and operational delay-risk classification ($\tau = 6.0\text{h}$).
 - Highlights stage-level factors while explicitly distinguishing model estimates from synthetic simulation parameters.
 
+### 7.5 Repeated-Seed Stability Evaluation (10 Deterministic Runs)
+To evaluate algorithmic stability across stochastic variations in synthetic journey realization, the pipeline was evaluated across 10 deterministic random seeds ($N=250$ shipments per run, 80/20 chronological split, total 2,500 simulated shipments):
+
+| Metric | Scheduled Baseline (Mean +/- Std) | HistGradientBoosting (Mean +/- Std) | Improvement |
+| :--- | :---: | :---: | :---: |
+| **MAE (hours)** | 10.643 +/- 1.928 hrs | **4.915 +/- 0.608 hrs** | **-53.0%** (std: 6.5%) |
+| **RMSE (hours)** | 16.738 +/- 2.491 hrs | **6.436 +/- 0.798 hrs** | **-61.1%** (std: 5.1%) |
+| **Delay Risk F1 ($\tau=6\text{h}$)** | 0.706 +/- 0.094 | **0.883 +/- 0.046** | +25.1% |
+| **Delay Risk Precision** | — | 0.906 +/- 0.042 | — |
+| **Delay Risk Recall** | — | 0.866 +/- 0.081 | — |
+
+- **Win Count:** HistGradientBoosting achieved lower MAE than the scheduled baseline in **10 out of 10 runs (100.0%)**.
+- **Model MAE Range:** Minimum MAE = 3.968 hrs, Maximum MAE = 5.921 hrs (Seed 42).
+- **Seeds Evaluated:** `[42, 101, 202, 303, 404, 505, 606, 707, 808, 909]`.
+
 ---
 
 ## 8. Explicit Assumptions, Boundary Disclosures & Limitations
@@ -220,3 +241,4 @@ The explainer engine (`src/shipment_explainer.py`) deconstructs individual predi
 6. **Exploratory AIS Audit Provenance:** Raw exploratory AIS files and preliminary audit scripts are omitted from this submission repository to maintain a self-contained archive; preliminary audit findings are preserved solely for methodological rationale and are not reproducible from this repository.
 7. **Unseen Route Transfer Boundary:** Model transfer between disparate route topologies (long-haul transoceanic vs. short-sea regional feeders) requires lane-specific normalization or stratified corridor training.
 8. **Scenario Analysis Scope:** Controlled scenario evaluations reflect deterministic manipulations of the synthetic simulation engine and must not be interpreted as empirical causal effects established from real-world maritime operations.
+9. **Parametric Stability Scope:** Repeated-seed evaluations measure algorithmic stability under the parameterized generative equations across pseudo-random generator states; they do not establish empirical statistical significance on real-world shipping telematics.

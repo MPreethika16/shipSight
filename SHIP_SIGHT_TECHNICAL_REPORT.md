@@ -174,6 +174,11 @@ Holding out each corridor in turn evaluates out-of-distribution route transfer a
 - **Disruption Scenarios:** A +0.35 port congestion index surge shifts model forecast by +0.123h. An unannounced +24.0h physical customs hold increases model test MAE from 5.921h to 7.557h (while baseline MAE spikes to 14.928h).
 - **Shipment Explanations:** Individual predictions deconstruct observed upstream delay at berthing ($D_2$) from downstream model slippage, providing auditability without target leakage.
 
+### Repeated-Seed Stability Evaluation (10 Deterministic Runs)
+Across 10 random seeds ($N=2,500$ shipments total, 80/20 chronological split per seed), HistGradientBoosting beat the scheduled baseline on MAE in **10 out of 10 runs (100%)**:
+- **Baseline:** MAE = $10.643 \pm 1.928\text{h}$, RMSE = $16.738 \pm 2.491\text{h}$, Delay-Risk F1 = $0.706 \pm 0.094$.
+- **HistGradientBoosting:** MAE = $4.915 \pm 0.608\text{h}$ (**-53.0%**), RMSE = $6.436 \pm 0.798\text{h}$ (**-61.1%**), Delay-Risk F1 = $0.883 \pm 0.046$.
+
 ---
 
 ## 8. Assumptions, Trade-offs & Limitations
@@ -186,6 +191,7 @@ Holding out each corridor in turn evaluates out-of-distribution route transfer a
 6. **No Production Readiness Claim:** ShipSight is an explainable proof-of-concept pipeline designed to evaluate multi-stage delay propagation without target leakage.
 7. **Exploratory AIS Audit Provenance:** Preliminary telemetry audit findings from NOAA MarineCadastre and AISHub reflect exploratory scoping not bundled in or reproducible from this submitted archive; they serve solely as methodological rationale for adopting a multi-stage benchmark.
 8. **Unseen Route Transfer Boundary:** Model transfer between disparate route topologies (long-haul transoceanic vs. short-sea regional feeders) requires lane-specific normalization or stratified corridor training.
+9. **Parametric Simulation Scope:** Multi-seed stability evaluates algorithmic consistency across pseudo-random generator draws; it does not constitute empirical significance on live telemetry.
 
 ---
 
