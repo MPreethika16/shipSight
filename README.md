@@ -1,7 +1,7 @@
 # ShipSight: Explainable ETA and Multi-Stage Delay Intelligence
 
 [![CI](https://github.com/MPreethika16/shipSight/actions/workflows/ci.yml/badge.svg)](https://github.com/MPreethika16/shipSight/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-27%20passed-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)]()
 
@@ -102,7 +102,7 @@ shipsight/
 │   ├── __init__.py
 │   ├── test_pipeline.py              # Core pipeline unit tests (8 tests)
 │   ├── test_corridor_evaluation.py   # Corridor isolation & LOCO tests (3 tests)
-│   ├── test_shipment_explainer.py    # Shipment explanation invariant tests (3 tests)
+│   ├── test_shipment_explainer.py    # Live vs retrospective modes, scenario sensitivity, zero-leakage tests (9 tests)
 │   ├── test_ablation_and_scenarios.py# Ablation & scenario reproducibility (3 tests)
 │   └── test_repeated_seeds.py        # Multi-seed determinism & win count tests (4 tests)
 ├── run_pipeline.py                   # Master end-to-end execution runner
@@ -130,7 +130,7 @@ python run_pipeline.py
 ```
 
 ### Run Test Suite Independently
-Executes all 21 automated unit tests across core pipeline, corridor isolation, shipment explainer, disruption scenarios, and repeated seeds:
+Executes all 27 automated unit tests across core pipeline, corridor isolation, shipment explainer, disruption scenarios, and repeated seeds:
 ```bash
 python -m pytest -v
 ```
@@ -148,9 +148,9 @@ python -m pytest -v
    ```bash
    python -m src.ablation_and_scenarios
    ```
-4. **Inspect Individual Shipment Explanation:**
+4. **Inspect Individual Shipment Explanation (Live Forecast & Retrospective Audit):**
    ```bash
-   python -c "from src.generator import generate_synthetic_shipments; from src.model import split_chronological, build_feature_matrix, build_pipeline; from src.shipment_explainer import explain_shipment, format_shipment_explanation; import pandas as pd; records = generate_synthetic_shipments(250, 42); train, test = split_chronological(records); X, y, _, _ = build_feature_matrix(train); p = build_pipeline().fit(pd.DataFrame(X), y); print(format_shipment_explanation(explain_shipment(test[0], p)))"
+   python -c "from src.generator import generate_synthetic_shipments; from src.model import split_chronological, build_feature_matrix, build_pipeline; from src.shipment_explainer import explain_shipment, format_shipment_explanation; import pandas as pd; records = generate_synthetic_shipments(250, 42); train, test = split_chronological(records); X, y, _, _ = build_feature_matrix(train); p = build_pipeline().fit(pd.DataFrame(X), y); print('=== LIVE MODE ===\n', format_shipment_explanation(explain_shipment(test[0], p, mode='live'))); print('\n=== RETROSPECTIVE MODE ===\n', format_shipment_explanation(explain_shipment(test[0], p, mode='retrospective')))"
    ```
 
 ---
@@ -208,11 +208,19 @@ To evaluate model transfer to completely unseen trade corridors, each corridor i
 - **Input-Sensitivity Stress Test:** Elevating `port_congestion_index` by +0.35 at inference time (holding ground truth constant) shifts remaining-duration forecasts by an average of **+0.123 hours**.
 - **Ground-Truth Regulatory Hold Disruption:** Imposing an unannounced +24.0h physical hold on inspected test containers increases model test MAE from **5.921h to 7.557h** (while scheduled baseline MAE spikes to **14.928h**).
 
-### 7.4 Shipment-Level Prediction Explanations
-The explainer engine (`src/shipment_explainer.py`) deconstructs individual predictions at the vessel docking cutoff ($t_{\text{pred}}$):
-- Explicitly decouples observed upstream delay at berth ($D_2$) from model-predicted downstream slippage ($\hat{y}_{\text{rem}} - \sum d^{\text{sched}}$).
-- Reports predicted final ETA ($\widehat{\text{ETA}} = T_2^{\text{actual}} + \hat{y}_{\text{rem}}$) and operational delay-risk classification ($\tau = 6.0\text{h}$).
-- Highlights stage-level factors while explicitly distinguishing model estimates from synthetic simulation parameters.
+### 7.4 Shipment-Level Prediction Explanations & Model Sensitivity
+The explainer engine (`src/shipment_explainer.py`) provides transparent, auditable shipment-level intelligence with strict separation of operational contexts:
+
+- **Live Operational Prediction Mode (`mode="live"`):**
+  - Designed for real-time dispatch and demurrage planning at vessel berthing ($t_{\text{pred}} = T_2^{\text{actual}}$).
+  - Reports prediction cutoff, observed upstream delay accumulated ($D_2$), scheduled remaining allowance, predicted remaining duration, predicted final ETA, and predicted delay relative to scheduled delivery.
+  - **Zero Downstream Leakage:** Realized downstream delivery timestamps, actual final delay, dwell durations, and forecast errors are strictly quarantined and never revealed.
+- **Retrospective Evaluation Audit Mode (`mode="retrospective"`):**
+  - Designed for post-voyage performance auditing and carrier scorecards.
+  - Compares operational predictions against ground-truth realized milestones (`actual_final_delivery_time`, `final_delay_hours`) and reports exact forecast errors.
+- **Fitted Model Scenario Sensitivity:**
+  - Evaluates what-if variations by re-running the actual fitted regression pipeline on modified copies of admissible features at the berthing cutoff (e.g., counterfactually toggling `customs_inspection_flag: 0 <-> 1` or simulating port congestion surges).
+  - **Methodological Disclaimer:** Sensitivity shifts reflect response-surface variations of the fitted statistical estimator. They are **explicitly NOT physical causal attributions, NOT guarantees of real-world outcome interventions, and MUST NOT be labeled as additive SHAP values**.
 
 ### 7.5 Repeated-Seed Stability Evaluation (10 Deterministic Runs)
 To evaluate algorithmic stability across stochastic variations in synthetic journey realization, the pipeline was evaluated across 10 deterministic random seeds ($N=250$ shipments per run, 80/20 chronological split, total 2,500 simulated shipments):
@@ -242,3 +250,4 @@ To evaluate algorithmic stability across stochastic variations in synthetic jour
 7. **Unseen Route Transfer Boundary:** Model transfer between disparate route topologies (long-haul transoceanic vs. short-sea regional feeders) requires lane-specific normalization or stratified corridor training.
 8. **Scenario Analysis Scope:** Controlled scenario evaluations reflect deterministic manipulations of the synthetic simulation engine and must not be interpreted as empirical causal effects established from real-world maritime operations.
 9. **Parametric Stability Scope:** Repeated-seed evaluations measure algorithmic stability under the parameterized generative equations across pseudo-random generator states; they do not establish empirical statistical significance on real-world shipping telematics.
+10. **Model Sensitivity vs. Causal Attribution:** What-if scenario sensitivity reflects the statistical response-surface derivative of the fitted machine learning model on modified feature vectors; it does not claim physical causal mechanisms or guarantee real-world intervention outcomes.

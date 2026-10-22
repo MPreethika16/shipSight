@@ -232,6 +232,7 @@ def run_training_and_evaluation() -> Dict[str, Any]:
         "baseline": baseline_metrics,
         "hist_gradient_boosting": ml_metrics,
         "feature_importances": feature_importances,
+        "pipeline": pipeline,
     }
 
 
