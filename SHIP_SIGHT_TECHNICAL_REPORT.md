@@ -1,0 +1,188 @@
+# Technical Report: ShipSight — Explainable ETA and Delay Intelligence
+
+**Author:** Preethika Manepally  
+**Project:** ShipSight — Multi-Stage Shipment ETA and Delay Propagation  
+**Evaluation Scope:** Aiqon AI Internship Assessment (Round 2)  
+**Date:** October 2026  
+
+---
+
+## 1. Executive Summary
+
+In international containerized shipping, an Estimated Time of Arrival (ETA) is an evolving operational signal rather than a static forecast. Disruptions occurring at upstream stages—such as adverse weather during maritime navigation or anchorage queuing outside congested ports—frequently cascade into downstream terminal handling, customs holds, and inland delivery delays.
+
+This report presents **ShipSight**, an explainable machine learning system developed for Aiqon to:
+1. Forecast remaining journey duration and final ETA at the critical operational decision point: **vessel berthing** ($t_{\text{pred}} = \text{actual\_berth\_time}$).
+2. Estimate shipment delay magnitude ($\text{final\_delay\_hours}$) and classify delay risk against an explicit operational threshold ($\tau = 6.0\text{ hours}$).
+3. Model and quantify how delays accumulate, amplify, or absorb across a 5-stage shipment lifecycle.
+4. Provide rigorous feature attribution without introducing temporal lookahead leakage.
+
+Evaluating on a strictly chronological held-out test set ($N=50$, 60% on-time vs. 40% delayed), our scikit-learn `HistGradientBoostingRegressor` pipeline achieves an **MAE of 5.921 hours** and **RMSE of 7.237 hours**, representing a **44.2% error reduction in MAE** and **54.3% in RMSE** over the scheduled-duration baseline, which assumes that downstream stages finish within their scheduled allowances (MAE: 10.608 hours). On the derived delay-risk classification task, the model achieved a higher delay-risk F1-score than the scheduled-duration baseline on the held-out synthetic test set (**0.811** vs. **0.667**; Precision: 0.882, Recall: 0.750), while a majority-class classifier predicting all shipments on-time achieved an F1-score of 0.000.
+
+---
+
+## 2. Exploratory Data Review & Methodology Decision
+
+Prior to architecture selection, an exploratory investigation into real-world Automatic Identification System (AIS) vessel telemetry was conducted using public extracts (including NOAA MarineCadastre coastal archives and AISHub vessel position snapshots).
+
+*Provenance Disclosure:* The raw exploratory AIS sample files and preliminary audit scripts are not included in this submitted archive to maintain a lightweight, self-contained benchmark repository. Specific exploratory sample sizes and error-rate statistics cited during initial scoping represent findings from an earlier review that are not directly reproducible from the submitted archive.
+
+### Methodological Limitations of Raw AIS Telemetry
+1. **Absence of Supply Chain Lifecycle Events:** Raw AIS captures marine transponder fixes ($\text{LAT}, \text{LON}$) and vessel kinematics ($\text{SOG}, \text{COG}$). It possesses **zero visibility into landside and terminal operations** (berth discharge, customs clearance, terminal yard dwell, inland gate-out).
+2. **Missing Baseline Schedules:** Raw AIS broadcasts do not contain contractual carrier schedules ($T_{\text{sched}}$). Consequently, delay ($\text{Actual} - \text{Scheduled}$) cannot be calculated without external booking schedules.
+3. **Telemetry & Attribute Quality Gaps:** Broadcast AIS feeds routinely exhibit corrupted kinematic reports, unavailable heading sentinels (`511`), unstandardized or missing free-text destination strings, and spatial receiver clipping that fractures journey continuity.
+
+### The Decision for Option B (Structured Multi-Stage Benchmark)
+Because Aiqon's problem statement explicitly requires modeling **delay propagation across intermediate stages** (port arrival, customs clearance, final delivery) and authorizes constructing a synthetic dataset of 100–300 records, we implemented **Option B**: a reproducible, physics-grounded 250-shipment benchmark across 5 global trade corridors.
+
+---
+
+## 3. Mathematical Formulation & Leakage-Free Design
+
+### Sequential Stage Definition
+Each shipment journey $i$ traverses $K = 5$ sequential stages:
+- **Stage 1 ($k=1$):** Maritime Sea Transit (Origin Departure to Destination Anchorage)
+- **Stage 2 ($k=2$):** Port Anchorage, Pilotage & Berthing
+- **Stage 3 ($k=3$):** Terminal Container Handling & Yard Dwell
+- **Stage 4 ($k=4$):** Customs & Regulatory Clearance
+- **Stage 5 ($k=5$):** Inland Drayage & Consignee Gate Delivery
+
+### Closed Timestamp Progression
+To prevent double-counting, departure delay $\Delta t_{i, \text{dep}}$ is modeled separately and not added to waterborne transit duration $d_{i,1}^{\text{actual}}$:
+- **Scheduled Sequence:** $T_{i,0}^{\text{sched}}$ is scheduled departure; $T_{i,k}^{\text{sched}} = T_{i,k-1}^{\text{sched}} + d_{i,k}^{\text{sched}}$.
+- **Actual Realization:** $T_{i,0}^{\text{actual}} = T_{i,0}^{\text{sched}} + \Delta t_{i, \text{dep}}$; $T_{i,k}^{\text{actual}} = T_{i,k-1}^{\text{actual}} + d_{i,k}^{\text{actual}}$.
+
+Total final delay satisfies the exact invariant:
+$$\text{final\_delay\_hours}_i = \frac{T_{i,5}^{\text{actual}} - T_{i,5}^{\text{sched}}}{3600} = \Delta t_{i, \text{dep}} + \sum_{k=1}^5 \left( d_{i,k}^{\text{actual}} - d_{i,k}^{\text{sched}} \right)$$
+
+### Operational Prediction Cutoff ($t_{\text{pred}}$)
+$$\mathbf{t_{\text{pred}} = \text{actual\_berth\_time} = T_{i,2}^{\text{actual}}}$$
+*Why Future Information is Strictly Excluded:* At the moment a container ship berths, downstream events (crane moves, customs inspections, highway traffic) have not yet occurred. Including future actual timestamps or downstream durations would introduce fatal target leakage and produce an un-deployable model.
+
+### Prediction Targets
+1. **Primary Regression Target (Remaining Duration):**
+   $$y_{i, \text{rem}} = d_{i,3}^{\text{actual}} + d_{i,4}^{\text{actual}} + d_{i,5}^{\text{actual}}$$
+   $$\widehat{\text{ETA}}_i = T_{i,2}^{\text{actual}} + \hat{y}_{i, \text{rem}}$$
+2. **Derived Final Delay:**
+   $$\hat{y}_{i, \text{delay}} = \frac{T_{i,2}^{\text{actual}} + \hat{y}_{i, \text{rem}} - T_{i,5}^{\text{sched}}}{3600} \equiv D_{i,2} + \left(\hat{y}_{i, \text{rem}} - \sum_{k=3}^5 d_{i,k}^{\text{sched}}\right)$$
+   *(where $D_{i,2}$ is the delay already accumulated upon berthing).*
+3. **Derived Delay Risk:** $\hat{y}_{i, \text{risk}} = \mathbb{I}(\hat{y}_{i, \text{delay}} > 6.0\text{ hours})$.
+
+### Feature Whitelist (13 Admitted Features)
+- **Static Attributes:** `route_id`, `carrier_code`, `cargo_type`, `container_teu`, `transit_distance_nm`.
+- **Planned Downstream Allowances:** `scheduled_terminal_hours`, `scheduled_customs_hours`, `scheduled_drayage_hours`.
+- **Upstream Realizations (Known at $t_{\text{pred}}$):** `weather_severity_index`, `carried_delay_at_anchorage`, `port_congestion_index`, `carried_delay_at_berth`, `customs_inspection_flag`.
+
+*Operational Scope of `customs_inspection_flag`:* This feature represents an administrative inspection decision assumed to be known by the time the vessel berths (such as pre-arrival electronic manifest risk-scoring transmitted by border authorities prior to docking). It explicitly represents an assumed, pre-known regulatory decision rather than an actual physical inspection outcome or downstream milestone. In a real-world deployment, this feature is valid only if regulatory agencies provide advance hold notifications before vessel berthing; real-world availability was not verified in this assessment.
+
+All realized downstream durations ($d_3, d_4, d_5$), downstream timestamps ($T_3, T_4, T_5$), and target derivatives are strictly blacklisted from model inputs.
+
+---
+
+## 4. Delay Generation & Propagation Mechanics
+
+The synthetic simulation (`src/generator.py`, random seed 42) reflects real-world operational friction:
+
+1. **Origin Departure ($k=0$):** 45% of vessels depart on-schedule ($\Delta t_{\text{dep}} = 0$); 55% experience departure delays drawn from an Exponential distribution ($\text{scale}=4.0\text{h}$, clipped to $24.0\text{h}$).
+2. **Maritime Transit ($k=1$):** Weather severity $W_i \sim \text{Normal}(2.3, 0.8)$ clipped to $[1.0, 5.0]$. Favorable weather ($W_i < 2.3$) allows slight schedule recovery; adverse weather increases transit duration ($+3.5\%$ per index unit above 2.3) plus Gaussian hydrodynamic noise $\text{Normal}(0.0, 3.5\text{h})$.
+3. **Anchorage & Berthing ($k=2$):** If carried delay $D_{i,1} \le 2.0\text{ hours}$, the vessel retains its reserved pilot/tug window with zero congestion penalty. If $D_{i,1} > 2.0\text{ hours}$, it incurs an excess-delay queue penalty scaled by the port congestion index $C_i \sim \text{Beta}(2.0, 3.0)$:
+   $$d_{i,2}^{\text{actual}} = \max\left(0.6 \cdot d_{i,2}^{\text{sched}}, \; d_{i,2}^{\text{sched}} + 0.35 \times \max(0.0, D_{i,1} - 2.0) \times C_i + \epsilon_{i,2}\right)$$
+   where $\epsilon_{i,2} \sim \text{Normal}(0.0, 2.5\text{h})$.
+4. **Terminal Handling ($k=3$):** Terminal yards absorb up to $4.0\text{h}$ of carried delay:
+   $$d_{i,3}^{\text{actual}} = \max\left(0.7 \cdot d_{i,3}^{\text{sched}}, \; d_{i,3}^{\text{sched}} + 0.15 \times \max(0.0, D_{i,2}) - 4.0 + \epsilon_{i,3}\right)$$
+   where $\epsilon_{i,3} \sim \text{Normal}(0.0, 3.0\text{h})$.
+5. **Customs Clearance ($k=4$):** Pre-arrival manifest flag based on cargo risk. Physical inspection holds add $\Delta_{\text{inspect}} \sim \text{Uniform}(24.0, 48.0\text{h})$; automated electronic clearance clears on-schedule with administrative noise $\text{Normal}(-1.0, 2.0\text{h})$.
+6. **Inland Drayage ($k=5$):** $d_{i,5}^{\text{actual}} = \max(0.6 \cdot d_{i,5}^{\text{sched}}, \; d_{i,5}^{\text{sched}} + 0.10 \cdot \max(0.0, D_{i,4}) + \epsilon_{i,5})$ with $\epsilon_{i,5} \sim \text{Normal}(0.0, 2.5\text{h})$.
+
+---
+
+## 5. Model Architecture & Evaluation Methodology
+
+### Chronological Train / Test Partition
+The 250 records are sorted chronologically by `scheduled_departure_time`:
+- **Training Set ($N = 200$, 80%):** Earliest departures (123 on-time, 77 delayed).
+- **Held-Out Test Set ($N = 50$, 20%):** Latest departures (30 on-time, 20 delayed).
+- Zero temporal overlap exists, and all 5 trade corridors are represented in both sets.
+- Hyperparameters were fixed a priori (`max_iter=100`, `max_depth=4`, `min_samples_leaf=10`, `learning_rate=0.08`, `random_state=42`) with **zero tuning on the test set**.
+
+### Models Evaluated
+1. **Scheduled-Duration Baseline:** $\hat{y}_{\text{base}} = d_{i,3}^{\text{sched}} + d_{i,4}^{\text{sched}} + d_{i,5}^{\text{sched}}$, which assumes that downstream stages finish within their scheduled allowances.
+2. **HistGradientBoostingRegressor:** Scikit-learn pipeline using `OneHotEncoder(sparse_output=False, handle_unknown="ignore")` for categorical columns and `passthrough` for numerical features.
+3. **Majority-Class Classifier:** Benchmark predicting the most frequent training class (On-Time = 0).
+
+---
+
+## 6. Experimental Results
+
+### Performance Comparison on Held-Out Test Set ($N = 50$)
+
+| Evaluation Metric | Scheduled Baseline | HistGradientBoosting | Majority-Class (Always On-Time) | Improvement vs. Baseline |
+| :--- | :---: | :---: | :---: | :---: |
+| **MAE (hours)** | 10.608 hrs | **5.921 hrs** | — | **-44.2%** |
+| **RMSE (hours)** | 15.853 hrs | **7.237 hrs** | — | **-54.3%** |
+| **MAPE (%)** *(Caveat: zero-skew)* | 14.17% | **8.89%** | — | -37.3% |
+| **Delay-Risk Precision ($\tau = 6\text{h}$)** | 0.846 | **0.882** | 0.000 | +4.3% |
+| **Delay-Risk Recall ($\tau = 6\text{h}$)** | 0.550 | **0.750** | 0.000 | **+36.4%** |
+| **Delay-Risk F1-Score** | 0.667 | **0.811** | 0.000 | **+21.6%** |
+
+### Delay-Risk Confusion Matrices ($\tau = 6.0\text{ hours}$, Test $N = 50$)
+```text
+Scheduled Baseline:                     HistGradientBoosting:
+               Predicted                               Predicted
+             On-Time  Delayed                        On-Time  Delayed
+True On-Time:  [ 28       2 ]          True On-Time:  [ 28       2 ]
+True Delayed:  [  9      11 ]          True Delayed:  [  5      15 ]
+```
+- The Scheduled Baseline misclassified 9 delayed shipments as on-time (Recall: 55.0%) due to blindness to customs holds and yard friction.
+- `HistGradientBoosting` reduced false negatives from 9 to 5, boosting recall to **75.0%** and precision to **88.2%**, achieving an F1-score of **0.811**.
+- The majority-class classifier predicts On-Time for all 50 shipments, achieving 60.0% accuracy but **0.000 F1 on delayed shipments**. The model achieved a higher delay-risk F1-score than the scheduled-duration baseline on the held-out synthetic test set.
+
+---
+
+## 7. Model Attribution & Delay Propagation Analysis
+
+### Permutation Feature Importance (Test Set MAE Degradation)
+Evaluating the increase in test MAE when each feature is randomly permuted:
+1. `customs_inspection_flag`: **+8.870 hours** error (primary driver of post-berth variance).
+2. `transit_distance_nm`: **+4.252 hours** error (corridor scale proxy).
+3. `route_id`: **+1.638 hours** error (corridor terminal characteristics).
+4. `container_teu`: **+0.053 hours** error.
+5. `port_congestion_index`: **+0.048 hours** error.
+
+*Attribution vs. Causality Disclaimer:* Permutation importance reflects the empirical sensitivity of the trained model on this dataset. It describes statistical association rather than proven physical causality.
+
+### Stage-to-Stage Delay Transmission Slopes
+Tracking cumulative delay $D_k = D_{k-1} + \delta_k$ across all 250 journeys:
+- **Departure $\rightarrow$ Anchorage:** Transmission slope = **$0.555$** (maritime schedule buffers absorb origin departure delays).
+- **Anchorage $\rightarrow$ Berthing:** Transmission slope = **$1.053$** (queue compounding when vessels arrive off-schedule).
+- **Berthing $\rightarrow$ Terminal:** Transmission slope = **$1.008$** (container terminal turnaround compounding).
+- **Terminal $\rightarrow$ Customs:** Transmission slope = **$1.051$**.
+- **Customs $\rightarrow$ Drayage Delivery:** Transmission slope = **$1.079$**.
+
+### Customs Inspection Disruption Impact
+- **Inspected Containers (44 shipments):** Mean customs dwell = **52.66 hours**.
+- **Auto-Cleared Containers (206 shipments):** Mean customs dwell = **16.01 hours**.
+- **Net Disruption Penalty:** **+36.65 hours** of additional dwell time directly attributable to physical inspection holds.
+
+---
+
+## 8. Assumptions, Trade-offs & Limitations
+
+1. **Synthetic Data Disclosure:** All 250 shipment records are simulated using parametric distributions. The benchmark is synthetic and does not represent live carrier telematics.
+2. **Model Attribution $\neq$ Causality:** Permutation importance scores reflect feature sensitivity in the trained GBDT estimator, not physical causal interventions.
+3. **Customs Availability Assumption:** `customs_inspection_flag` assumes pre-arrival screening notifications are accessible at berth; if unavailable in practice, downstream prediction error will increase.
+4. **Sample Size ($N = 250$):** Sized for the take-home assessment. Industrial production models require multi-year datasets capturing seasonal surges and container imbalances.
+5. **Single-Leg Simplification:** The system models point-to-point intermodal lanes without multi-port container restowage or feeder transshipment connections.
+6. **No Production Readiness Claim:** ShipSight is an explainable proof-of-concept pipeline designed to evaluate multi-stage delay propagation without target leakage.
+7. **Exploratory AIS Audit Provenance:** Preliminary telemetry audit findings from NOAA MarineCadastre and AISHub reflect exploratory scoping not bundled in or reproducible from this submitted archive; they serve solely as methodological rationale for adopting a multi-stage benchmark.
+
+---
+
+## 9. Conclusion & Operational Recommendations for Aiqon
+
+1. **Ingest EDI 315 / API Milestones:** Production ETA systems must combine marine AIS tracking with carrier milestone feeds containing container status codes (gate-in, customs hold, release).
+2. **Dynamic Geofence Congestion:** Use real-time AIS vessel density within port anchorage polygons to dynamically update `port_congestion_index`.
+3. **Two-Stage Hurdle Architecture:** Because customs inspection is the single largest disruption factor (+36.7 hours), deploy a classification model at vessel departure to forecast the probability of customs inspection, feeding this calibrated risk directly into the downstream regression model.
+
+---
+*End of Technical Report.*
