@@ -11,6 +11,10 @@ import unittest
 from src.generator import export_synthetic_csv, generate_synthetic_shipments
 from src.model import run_training_and_evaluation
 from src.propagation_analysis import analyze_delay_propagation
+from src.repeated_seed_evaluation import (
+    format_repeated_seed_summary,
+    run_repeated_seed_evaluation,
+)
 
 
 def main() -> int:
@@ -19,13 +23,13 @@ def main() -> int:
     print("=" * 70)
 
     # 1. Generate Synthetic Dataset
-    print("\n[Step 1/4] Generating 250-row synthetic shipment dataset...")
+    print("\n[Step 1/5] Generating 250-row synthetic shipment dataset...")
     records = generate_synthetic_shipments(num_shipments=250, seed=42)
     csv_path = export_synthetic_csv(records)
     print(f"  -> Generated {len(records)} records saved to {csv_path}")
 
     # 2. Run Automated Verification Tests
-    print("\n[Step 2/4] Running automated pipeline integrity test suite...")
+    print("\n[Step 2/5] Running automated pipeline integrity test suite...")
     loader = unittest.TestLoader()
     suite = loader.discover("tests", pattern="test_*.py")
     runner = unittest.TextTestRunner(verbosity=1)
@@ -37,7 +41,7 @@ def main() -> int:
     print(f"  -> All {test_result.testsRun} unit tests passed successfully!")
 
     # 3. Model Training & Evaluation
-    print("\n[Step 3/4] Training and evaluating baseline vs HistGradientBoostingRegressor...")
+    print("\n[Step 3/5] Training and evaluating baseline vs HistGradientBoostingRegressor...")
     model_results = run_training_and_evaluation()
 
     base = model_results["baseline"]
@@ -62,8 +66,13 @@ def main() -> int:
     for feat in model_results["feature_importances"][:6]:
         print(f"  * {feat['feature']:<28}: +{feat['mean_mae_increase']:.3f} hrs error (std: {feat['std']:.3f})")
 
-    # 4. Delay Propagation Analysis
-    print("\n[Step 4/4] Analyzing stage-by-stage delay propagation dynamics...")
+    # 4. Repeated-Seed Stability Evaluation
+    print("\n[Step 4/5] Evaluating pipeline stability across 10 deterministic random seeds...")
+    seed_results = run_repeated_seed_evaluation()
+    print("\n" + format_repeated_seed_summary(seed_results))
+
+    # 5. Delay Propagation Analysis
+    print("\n[Step 5/5] Analyzing stage-by-stage delay propagation dynamics...")
     prop_results = analyze_delay_propagation(records)
 
     print("\nEmpirical Delay Transmission Slopes across Stages (Delta D_k / Delta D_{k-1}):")
