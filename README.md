@@ -1,7 +1,7 @@
 # ShipSight: Explainable ETA and Multi-Stage Delay Intelligence
 
 [![CI](https://github.com/MPreethika16/shipSight/actions/workflows/ci.yml/badge.svg)](https://github.com/MPreethika16/shipSight/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-27%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-36%20passed-brightgreen.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)]()
 
@@ -54,14 +54,15 @@ $$\text{final\_delay\_hours} = \frac{T_5^{\text{actual}} - T_5^{\text{sched}}}{3
 $$\mathbf{t_{\text{pred}} = \text{actual\_berth\_time} = T_2^{\text{actual}}}$$
 When the ship docks, terminal operators and consignees require a reliable forecast to book drayage trucks and warehouse labor. All downstream durations ($d_3, d_4, d_5$) and timestamps ($T_3, T_4, T_5$) are strictly excluded to prevent lookahead target leakage.
 
-### Prediction Targets
-1. **Primary Target (Remaining Hours):**
-   $$y_{\text{rem}} = d_3^{\text{actual}} + d_4^{\text{actual}} + d_5^{\text{actual}}$$
-   $$\widehat{\text{ETA}} = T_2^{\text{actual}} + \hat{y}_{\text{rem}}$$
-2. **Derived Final Delay:**
-   $$\hat{y}_{\text{delay}} = \frac{T_2^{\text{actual}} + \hat{y}_{\text{rem}} - T_5^{\text{sched}}}{3600}$$
-3. **Derived Delay Risk:**
-   $$\hat{y}_{\text{risk}} = \mathbb{I}(\hat{y}_{\text{delay}} > 6.0\text{ hours})$$
+### Prediction Targets & Formulations
+1. **Direct Regression Target (Remaining Duration):**
+   $$y_{\text{rem}} = d_3^{\text{actual}} + d_4^{\text{actual}} + d_5^{\text{actual}}, \quad \widehat{\text{ETA}} = T_2^{\text{actual}} + \hat{y}_{\text{rem}}$$
+2. **Residual Regression Target (`ResidualETAPredictor`):**
+   $$\Delta_{\text{rem}} = y_{\text{rem}} - (d_3^{\text{sched}} + d_4^{\text{sched}} + d_5^{\text{sched}})$$
+   $$\hat{y}_{\text{rem}} = \max\left(0.0, \; (d_3^{\text{sched}} + d_4^{\text{sched}} + d_5^{\text{sched}}) + \widehat{\Delta}_{\text{rem}}\right)$$
+   *Advantage:* Expresses downstream durations as deviations from scheduled allowances ($\Delta_{\text{rem}} \approx [-4, +40\text{h}]$), mitigating tree leaf bounding on unseen routes within this synthetic benchmark.
+3. **Derived Final Delay & Delay Risk:**
+   $$\hat{y}_{\text{delay}} = \frac{T_2^{\text{actual}} + \hat{y}_{\text{rem}} - T_5^{\text{sched}}}{3600}, \quad \hat{y}_{\text{risk}} = \mathbb{I}(\hat{y}_{\text{delay}} > 6.0\text{ hours})$$
 
 ---
 
@@ -92,7 +93,7 @@ shipsight/
 │   ├── __init__.py
 │   ├── config.py                     # Corridors, whitelist, seeds, thresholds
 │   ├── generator.py                  # Simulation engine & sequential timestamps
-│   ├── model.py                      # Baseline, HistGradientBoosting, evaluation
+│   ├── model.py                      # Baseline, Direct GBDT, ResidualETAPredictor
 │   ├── propagation_analysis.py       # Stage delay transmission analytics
 │   ├── corridor_evaluation.py        # Leave-one-corridor-out cross-validation
 │   ├── shipment_explainer.py         # Individual shipment prediction explanations
@@ -101,8 +102,9 @@ shipsight/
 ├── tests/
 │   ├── __init__.py
 │   ├── test_pipeline.py              # Core pipeline unit tests (8 tests)
+│   ├── test_residual_model.py        # Residual target, clipping, leakage & backwards compat (9 tests)
 │   ├── test_corridor_evaluation.py   # Corridor isolation & LOCO tests (3 tests)
-│   ├── test_shipment_explainer.py    # Live vs retrospective modes, scenario sensitivity, zero-leakage tests (9 tests)
+│   ├── test_shipment_explainer.py    # Live vs retrospective modes, scenario sensitivity (9 tests)
 │   ├── test_ablation_and_scenarios.py# Ablation & scenario reproducibility (3 tests)
 │   └── test_repeated_seeds.py        # Multi-seed determinism & win count tests (4 tests)
 ├── run_pipeline.py                   # Master end-to-end execution runner
@@ -130,7 +132,7 @@ python run_pipeline.py
 ```
 
 ### Run Test Suite Independently
-Executes all 27 automated unit tests across core pipeline, corridor isolation, shipment explainer, disruption scenarios, and repeated seeds:
+Executes all 36 automated unit tests across core pipeline, residual model, corridor isolation, shipment explainer, disruption scenarios, and repeated seeds:
 ```bash
 python -m pytest -v
 ```
@@ -159,29 +161,31 @@ python -m pytest -v
 
 ### 7.1 Primary Chronological Benchmark ($N_{\text{test}} = 50$)
 
-| Evaluation Metric | Scheduled Baseline | HistGradientBoosting | Majority-Class (Always On-Time) |
-| :--- | :--- | :--- | :--- |
-| **MAE (hours)** | **10.608 hrs** | **5.921 hrs (-44.2%)** | — |
-| **RMSE (hours)** | **15.853 hrs** | **7.237 hrs (-54.3%)** | — |
-| **MAPE (%)** *(Caveat: zero-skew)* | 14.17% | 8.89% | — |
-| **Delay Risk Precision ($\tau=6\text{h}$)** | 0.846 | 0.882 | 0.000 |
-| **Delay Risk Recall ($\tau=6\text{h}$)** | 0.550 | 0.750 | 0.000 |
-| **Delay Risk F1-Score** | 0.667 | 0.811 | 0.000 |
+| Evaluation Metric | Scheduled Baseline | Direct GBDT Benchmark | Final Residual GBDT | Majority-Class (Always On-Time) | Res. vs. Base |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **MAE (hours)** | 10.608 hrs | 5.921 hrs | **5.414 hrs** | — | **-49.0%** |
+| **RMSE (hours)** | 15.853 hrs | 7.237 hrs | **6.578 hrs** | — | **-58.5%** |
+| **MAPE (%)** *(Caveat: zero-skew)* | 14.17% | 8.89% | **8.09%** | — | -42.9% |
+| **Delay Risk Precision ($\tau=6\text{h}$)** | 0.846 | **0.882** | **0.882** | 0.000 | +4.3% |
+| **Delay Risk Recall ($\tau=6\text{h}$)** | 0.550 | **0.750** | **0.750** | 0.000 | **+36.4%** |
+| **Delay Risk F1-Score** | 0.667 | **0.811** | **0.811** | 0.000 | **+21.6%** |
 
 *Baseline Definition:* The scheduled-duration baseline assumes that downstream stages finish within their scheduled allowances ($d_3^{\text{sched}} + d_4^{\text{sched}} + d_5^{\text{sched}}$).
 
 #### Confusion Matrices ($\tau = 6.0\text{ hours}$, Labels: [0 = On-Time, 1 = Delayed])
 - **Test Set Ground Truth:** 30 On-Time (60%), 20 Delayed (40%).
-- **Scheduled Baseline:** `[[28, 2], [9, 11]]` (misclassified 9 delayed shipments as on-time; Recall = 55.0%).
-- **HistGradientBoosting:** `[[28, 2], [5, 15]]` (reduced false negatives to 5, achieving Recall = 75.0% and F1 = 0.811).
-- **Majority-Class Benchmark:** `[[30, 0], [20, 0]]` (Accuracy: 60.0%, Precision: 0.0, Recall: 0.0, F1: 0.000).
+- **Scheduled Baseline:** `[[28, 2], [9, 11]]` (misclassified 9 delayed shipments as on-time; Recall = 55.0%, F1 = 0.667).
+- **Direct GBDT Benchmark:** `[[28, 2], [5, 15]]` (reduced false negatives to 5, achieving Precision = 88.2%, Recall = 75.0%, and F1 = 0.811).
+- **Final Residual GBDT:** `[[28, 2], [5, 15]]` (identically matched the classification boundary on this test partition: Precision = 88.2%, Recall = 75.0%, and F1 = 0.811).
+- **Majority-Class (Always On-Time) Benchmark:** `[[30, 0], [20, 0]]` (Accuracy: 60.0%, Precision: 0.0, Recall: 0.0, F1 = 0.000).
 
-#### Permutation Feature Importance (MAE Degradation When Shuffled)
+#### Permutation Feature Importance (MAE Degradation When Shuffled on Test Set)
 1. `customs_inspection_flag`: **+8.870 hrs**
 2. `transit_distance_nm`: **+4.252 hrs**
 3. `route_id`: **+1.638 hrs**
 4. `container_teu`: **+0.053 hrs**
 5. `port_congestion_index`: **+0.048 hrs**
+6. `carrier_code`: **+0.001 hrs**
 
 #### Stage-to-Stage Delay Transmission Dynamics
 - **Departure $\rightarrow$ Anchorage:** Transmission slope = **$0.555$** (schedule allowances and speed adjustments absorb departure delays).
@@ -192,16 +196,18 @@ python -m pytest -v
 ### 7.2 Leave-One-Corridor-Out (LOCO) Generalization Benchmark
 To evaluate model transfer to completely unseen trade corridors, each corridor is held out in turn while the pipeline is trained exclusively on the remaining 4 corridors:
 
-| Held-Out Corridor | N | Baseline MAE | Model MAE | MAE Impv. | Baseline RMSE | Model RMSE | RMSE Impv. |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **BEANR-USNYC** (3,450 nm) | 50 | 10.769 h | 10.766 h | +0.0% | 18.445 h | 11.652 h | +36.8% |
-| **CNSHA-USLAX** (5,700 nm) | 50 | 11.037 h | 8.531 h | +22.7% | 16.977 h | 9.768 h | +42.5% |
-| **INNSA-GBFXT** (6,400 nm) | 50 | 11.978 h | 6.756 h | +43.6% | 19.343 h | 8.013 h | +58.6% |
-| **KRPUS-JPYOK** (620 nm) | 50 | 8.578 h | 20.779 h | -142.2% | 13.443 h | 21.470 h | -59.7% |
-| **SGSIN-NLRTM** (8,300 nm) | 50 | 9.186 h | 10.585 h | -15.2% | 13.763 h | 12.017 h | +12.7% |
-| **Macro Average** | 250 | 10.310 h | 11.483 h | -11.4% | 16.394 h | 12.584 h | +23.2% |
+| Held-Out Corridor | N | Baseline MAE | Direct GBDT Benchmark MAE | Final Residual GBDT MAE | Residual vs. Base |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **BEANR-USNYC** (3,450 nm) | 50 | 10.769 h | 10.766 h (+0.0%) | **5.715 h** | **+46.9%** |
+| **CNSHA-USLAX** (5,700 nm) | 50 | 11.037 h | 8.531 h (+22.7%) | **4.772 h** | **+56.8%** |
+| **INNSA-GBFXT** (6,400 nm) | 50 | 11.978 h | 6.756 h (+43.6%) | **5.513 h** | **+54.0%** |
+| **KRPUS-JPYOK** (620 nm feeder) | 50 | 8.578 h | 20.779 h (-142.2%) | **4.459 h** | **+48.0%** |
+| **SGSIN-NLRTM** (8,300 nm) | 50 | 9.186 h | 10.585 h (-15.2%) | **5.714 h** | **+37.8%** |
+| **Macro Average** | 250 | 10.310 h | 11.483 h (-11.4%) | **5.235 h** | **+49.2%** |
 
-*Generalization Insight:* The model generalizes effectively across long-haul intermodal routes (up to 43.6% error reduction), but exhibits an extrapolation deficit when transferring to short feeder lanes (`KRPUS-JPYOK`). Because training was restricted to long-haul routes with larger downstream scheduled allowances (60–80h vs. 44h), the ensemble systematically overpredicts feeder dwell without route-specific normalization.
+*Direct Benchmark vs. Final Residual Model:*
+- **Historical Direct GBDT Benchmark:** Suffered from negative transfer on the regional feeder lane `KRPUS-JPYOK` (-142.2% error surge: 20.779h vs. 8.578h baseline), dragging macro MAE to 11.483h (-11.4% worse than baseline). Because tree ensembles cannot predict below the lowest target values seen in training ($y_{\text{train}} \in [55, 115\text{h}]$ vs. feeder allowance $44\text{h}$), the direct model suffered from leaf bounding bias.
+- **Final Residual GBDT Model:** Reformulating the target as scheduled residual $\Delta_{\text{rem}} = y_{\text{actual}} - y_{\text{sched}}$ centers predictions around route-specific scheduled allowances ($\Delta_{\text{rem}} \approx [-4, +40\text{h}]$ in this benchmark). On this synthetic five-corridor experiment, Residual GBDT overcame the feeder extrapolation deficit observed with direct trees (4.459h vs. 8.578h base) and outperformed the scheduled baseline across **all 5 out of 5 corridors (100% win rate)** with a Macro MAE of **5.235h (+49.2% improvement)** and Macro RMSE of **6.778h (+58.7% improvement)**. *Note: These results reflect observed behavior on this synthetic 5-corridor simulation and do not constitute a universal generalization guarantee on live maritime networks.*
 
 ### 7.3 Customs Feature Ablation & Controlled Disruption Scenarios
 - **Feature Ablation on `customs_inspection_flag`:** Removing the advance customs hold indicator increases test MAE from **5.921h to 11.599h (+95.9%)** and RMSE from **7.237h to 15.766h (+117.9%)**, causing the model to perform worse than the scheduled baseline (10.608h MAE). This confirms that advance regulatory notice is the dominant determinant of terminal dwell variance.
@@ -225,15 +231,18 @@ The explainer engine (`src/shipment_explainer.py`) provides transparent, auditab
 ### 7.5 Repeated-Seed Stability Evaluation (10 Deterministic Runs)
 To evaluate algorithmic stability across stochastic variations in synthetic journey realization, the pipeline was evaluated across 10 deterministic random seeds ($N=250$ shipments per run, 80/20 chronological split, total 2,500 simulated shipments):
 
-| Metric | Scheduled Baseline (Mean +/- Std) | HistGradientBoosting (Mean +/- Std) | Improvement |
-| :--- | :---: | :---: | :---: |
-| **MAE (hours)** | 10.643 +/- 1.928 hrs | **4.915 +/- 0.608 hrs** | **-53.0%** (std: 6.5%) |
-| **RMSE (hours)** | 16.738 +/- 2.491 hrs | **6.436 +/- 0.798 hrs** | **-61.1%** (std: 5.1%) |
-| **Delay Risk F1 ($\tau=6\text{h}$)** | 0.706 +/- 0.094 | **0.883 +/- 0.046** | +25.1% |
-| **Delay Risk Precision** | — | 0.906 +/- 0.042 | — |
-| **Delay Risk Recall** | — | 0.866 +/- 0.081 | — |
+| Metric | Scheduled Baseline | Direct GBDT Benchmark | Final Residual GBDT | Res. vs. Base (Mean Per-Seed) |
+| :--- | :---: | :---: | :---: | :---: |
+| **MAE (hours)** | 10.643 +/- 1.928 hrs | 4.915 +/- 0.608 hrs | **4.678 +/- 0.405 hrs** | **+55.2%** (pop std: 5.8%) |
+| **RMSE (hours)** | 16.738 +/- 2.491 hrs | 6.436 +/- 0.798 hrs | **6.054 +/- 0.464 hrs** | **+63.3%** (pop std: 4.1%) |
+| **Delay Risk F1 ($\tau=6\text{h}$)** | 0.706 +/- 0.094 | 0.883 +/- 0.046 | **0.894 +/- 0.045** | **+26.6%** |
+| **Delay Risk Precision** | 0.846 +/- 0.082 | 0.906 +/- 0.042 | **0.907 +/- 0.041** | — |
+| **Delay Risk Recall** | 0.612 +/- 0.115 | 0.866 +/- 0.081 | **0.886 +/- 0.076** | — |
 
-- **Win Count:** HistGradientBoosting achieved lower MAE than the scheduled baseline in **10 out of 10 runs (100.0%)**.
+- **Win Count:** Both Direct and Residual GBDT achieved lower MAE than the scheduled baseline in **10 out of 10 runs (100.0%)**. Residual GBDT exhibited tighter standard deviations and superior generalization across every seed.
+- **Improvement Terminology & Calculation Methods:** Reductions are evaluated per seed as `((baseline - model) / baseline) * 100`. Both calculation methods are distinguished to prevent silent conflation:
+  - **MAE:** Mean per-seed reduction is **+55.2%** (population standard deviation **5.8%**; Direct: **+53.0%**, pop std: 6.5%); aggregate mean reduction is **56.0%** (Direct: 53.8%).
+  - **RMSE:** Mean per-seed reduction is **+63.3%** (population standard deviation **4.1%**; Direct: **+61.1%**, pop std: 5.1%); aggregate mean reduction is **63.8%** (Direct: 61.5%).
 - **Model MAE Range:** Minimum MAE = 3.968 hrs, Maximum MAE = 5.921 hrs (Seed 42).
 - **Seeds Evaluated:** `[42, 101, 202, 303, 404, 505, 606, 707, 808, 909]`.
 

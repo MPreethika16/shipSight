@@ -65,7 +65,10 @@ def calculate_scenario_sensitivity(
         feat_scen1["customs_inspection_flag"] = counterfactual_flag
 
         X_scen1 = pd.DataFrame([feat_scen1])
-        scen1_rem_raw = float(pipeline.predict(X_scen1)[0])
+        if hasattr(pipeline, "is_residual") and getattr(pipeline, "is_residual"):
+            scen1_rem_raw = float(pipeline.predict(X_scen1, [sched_downstream_hours])[0])
+        else:
+            scen1_rem_raw = float(pipeline.predict(X_scen1)[0])
         scen1_rem = round(scen1_rem_raw, 2)
         scen1_delta_rem = round(scen1_rem - y_pred_rem_baseline, 2)
         scen1_final_delay = round(carried_delay_at_berth + (scen1_rem - sched_downstream_hours), 2)
@@ -108,7 +111,10 @@ def calculate_scenario_sensitivity(
         feat_scen2["port_congestion_index"] = target_cong
 
         X_scen2 = pd.DataFrame([feat_scen2])
-        scen2_rem_raw = float(pipeline.predict(X_scen2)[0])
+        if hasattr(pipeline, "is_residual") and getattr(pipeline, "is_residual"):
+            scen2_rem_raw = float(pipeline.predict(X_scen2, [sched_downstream_hours])[0])
+        else:
+            scen2_rem_raw = float(pipeline.predict(X_scen2)[0])
         scen2_rem = round(scen2_rem_raw, 2)
         scen2_delta_rem = round(scen2_rem - y_pred_rem_baseline, 2)
         scen2_final_delay = round(carried_delay_at_berth + (scen2_rem - sched_downstream_hours), 2)
@@ -183,23 +189,27 @@ def explain_shipment(
     feat_dict = {col: record[col] for col in FEATURE_WHITELIST}
     X_single = pd.DataFrame([feat_dict])
 
-    # 2. Model Prediction (Remaining Duration from Berth to Delivery)
-    y_pred_rem_raw = float(pipeline.predict(X_single)[0])
-    y_pred_rem = round(y_pred_rem_raw, 2)
-
-    # 3. Timestamps Known at Cutoff
+    # 2. Timestamps and Scheduled Allowance Known at Cutoff
     actual_berth_time = datetime.fromisoformat(record["actual_berth_time"])
     scheduled_final_delivery = datetime.fromisoformat(record["scheduled_final_delivery_time"])
-    predicted_final_eta = actual_berth_time + timedelta(hours=y_pred_rem)
-
-    # 4. Scheduled Downstream Remaining Allowance
     sched_downstream_hours = float(
         record["scheduled_terminal_hours"]
         + record["scheduled_customs_hours"]
         + record["scheduled_drayage_hours"]
     )
 
-    # 5. Delay Deconstruction Relative to Scheduled Delivery
+    # 3. Model Prediction (Remaining Duration from Berth to Delivery)
+    if hasattr(pipeline, "predict_residual"):
+        y_pred_residual_raw = float(pipeline.predict_residual(X_single)[0])
+        y_pred_rem_raw = float(pipeline.predict(X_single, [sched_downstream_hours])[0])
+    else:
+        y_pred_rem_raw = float(pipeline.predict(X_single)[0])
+        y_pred_residual_raw = y_pred_rem_raw - sched_downstream_hours
+
+    y_pred_rem = round(y_pred_rem_raw, 2)
+    predicted_final_eta = actual_berth_time + timedelta(hours=y_pred_rem)
+
+    # 4. Delay Deconstruction Relative to Scheduled Delivery
     carried_delay_at_berth = float(record["carried_delay_at_berth"])
     predicted_downstream_delta = float(y_pred_rem - sched_downstream_hours)
     predicted_final_delay_hours = float(carried_delay_at_berth + predicted_downstream_delta)
@@ -228,6 +238,7 @@ def explain_shipment(
             "scheduled_remaining_duration_hours": round(sched_downstream_hours, 2),
             "scheduled_downstream_allowance_hours": round(sched_downstream_hours, 2),
             "predicted_remaining_duration_hours": round(y_pred_rem, 2),
+            "predicted_residual_hours": round(y_pred_residual_raw, 2),
             "predicted_downstream_delta_hours": round(predicted_downstream_delta, 2),
             "predicted_final_delay_hours": round(predicted_final_delay_hours, 2),
             "predicted_delay_relative_to_schedule_hours": round(predicted_final_delay_hours, 2),

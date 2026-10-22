@@ -15,8 +15,10 @@ import pandas as pd
 
 from src.config import CORRIDORS
 from src.model import (
+    ResidualETAPredictor,
     build_feature_matrix,
     build_pipeline,
+    calculate_scheduled_remaining_duration,
     compute_metrics,
     load_dataset,
 )
@@ -53,7 +55,9 @@ def split_leave_one_corridor_out(
 def run_leave_one_corridor_out_evaluation(
     csv_path: str = os.path.join("data", "synthetic_shipments.csv"),
 ) -> Dict[str, Any]:
-    """Executes leave-one-corridor-out cross-validation across all configured corridors."""
+    """Executes leave-one-corridor-out cross-validation across all configured corridors,
+    comparing Baseline, Direct ML, and Residual ML candidates on identical folds.
+    """
     records = load_dataset(csv_path)
     corridor_keys = sorted(list(CORRIDORS.keys()))
     results_by_corridor: Dict[str, Dict[str, Any]] = {}
@@ -61,8 +65,15 @@ def run_leave_one_corridor_out_evaluation(
     total_test_samples = 0
     baseline_maes: List[float] = []
     baseline_rmses: List[float] = []
-    model_maes: List[float] = []
-    model_rmses: List[float] = []
+    baseline_f1s: List[float] = []
+
+    direct_maes: List[float] = []
+    direct_rmses: List[float] = []
+    direct_f1s: List[float] = []
+
+    residual_maes: List[float] = []
+    residual_rmses: List[float] = []
+    residual_f1s: List[float] = []
 
     for corridor in corridor_keys:
         train_rec, test_rec = split_leave_one_corridor_out(records, corridor)
@@ -72,42 +83,60 @@ def run_leave_one_corridor_out_evaluation(
         X_train_dicts, y_train_rem, _, _ = build_feature_matrix(train_rec)
         X_test_dicts, y_test_rem, _, _ = build_feature_matrix(test_rec)
 
-        # Baseline evaluation on held-out corridor
-        y_test_pred_base = np.array(
-            [
-                r["scheduled_terminal_hours"] + r["scheduled_customs_hours"] + r["scheduled_drayage_hours"]
-                for r in test_rec
-            ],
-            dtype=np.float64,
-        )
+        y_train_sched = calculate_scheduled_remaining_duration(train_rec)
+        y_test_sched = calculate_scheduled_remaining_duration(test_rec)
+
+        X_train_df = pd.DataFrame(X_train_dicts)
+        X_test_df = pd.DataFrame(X_test_dicts)
+
+        # 1. Baseline evaluation on held-out corridor
         base_metrics = compute_metrics(
             y_test_rem,
-            y_test_pred_base,
+            y_test_sched,
             test_rec,
             f"Baseline ({corridor})",
         )
 
-        # Train pipeline on remaining corridors
-        pipeline = build_pipeline()
-        X_train_df = pd.DataFrame(X_train_dicts)
-        X_test_df = pd.DataFrame(X_test_dicts)
-        pipeline.fit(X_train_df, y_train_rem)
-
-        y_test_pred_model = pipeline.predict(X_test_df)
-        model_metrics = compute_metrics(
+        # 2. Direct ML Pipeline (predicts absolute y_rem)
+        pipeline_direct = build_pipeline()
+        pipeline_direct.fit(X_train_df, y_train_rem)
+        y_test_pred_direct = pipeline_direct.predict(X_test_df)
+        direct_metrics = compute_metrics(
             y_test_rem,
-            y_test_pred_model,
+            y_test_pred_direct,
             test_rec,
-            f"HistGradientBoosting ({corridor})",
+            f"Direct ML ({corridor})",
         )
 
-        mae_improvement = (
-            (base_metrics["mae_hours"] - model_metrics["mae_hours"]) / base_metrics["mae_hours"] * 100.0
+        # 3. Residual ML Predictor: predicts y_rem - y_sched
+        residual_predictor = ResidualETAPredictor()
+        residual_predictor.fit(X_train_df, y_train_rem, y_train_sched)
+        y_test_pred_residual = residual_predictor.predict(X_test_df, y_test_sched)
+        residual_metrics = compute_metrics(
+            y_test_rem,
+            y_test_pred_residual,
+            test_rec,
+            f"Residual ML ({corridor})",
+        )
+
+        direct_mae_improvement = (
+            (base_metrics["mae_hours"] - direct_metrics["mae_hours"]) / base_metrics["mae_hours"] * 100.0
             if base_metrics["mae_hours"] > 0
             else 0.0
         )
-        rmse_improvement = (
-            (base_metrics["rmse_hours"] - model_metrics["rmse_hours"]) / base_metrics["rmse_hours"] * 100.0
+        direct_rmse_improvement = (
+            (base_metrics["rmse_hours"] - direct_metrics["rmse_hours"]) / base_metrics["rmse_hours"] * 100.0
+            if base_metrics["rmse_hours"] > 0
+            else 0.0
+        )
+
+        residual_mae_improvement = (
+            (base_metrics["mae_hours"] - residual_metrics["mae_hours"]) / base_metrics["mae_hours"] * 100.0
+            if base_metrics["mae_hours"] > 0
+            else 0.0
+        )
+        residual_rmse_improvement = (
+            (base_metrics["rmse_hours"] - residual_metrics["rmse_hours"]) / base_metrics["rmse_hours"] * 100.0
             if base_metrics["rmse_hours"] > 0
             else 0.0
         )
@@ -116,28 +145,61 @@ def run_leave_one_corridor_out_evaluation(
             "n_samples": n_test,
             "baseline_mae": base_metrics["mae_hours"],
             "baseline_rmse": base_metrics["rmse_hours"],
-            "model_mae": model_metrics["mae_hours"],
-            "model_rmse": model_metrics["rmse_hours"],
-            "mae_improvement_pct": round(mae_improvement, 1),
-            "rmse_improvement_pct": round(rmse_improvement, 1),
+            "baseline_f1": base_metrics["risk_f1"],
+            "direct_mae": direct_metrics["mae_hours"],
+            "direct_rmse": direct_metrics["rmse_hours"],
+            "direct_f1": direct_metrics["risk_f1"],
+            "direct_mae_improvement_pct": round(direct_mae_improvement, 1),
+            "direct_rmse_improvement_pct": round(direct_rmse_improvement, 1),
+            "residual_mae": residual_metrics["mae_hours"],
+            "residual_rmse": residual_metrics["rmse_hours"],
+            "residual_f1": residual_metrics["risk_f1"],
+            "residual_mae_improvement_pct": round(residual_mae_improvement, 1),
+            "residual_rmse_improvement_pct": round(residual_rmse_improvement, 1),
+            # Backwards-compatible aliases pointing to residual candidate:
+            "model_mae": residual_metrics["mae_hours"],
+            "model_rmse": residual_metrics["rmse_hours"],
+            "mae_improvement_pct": round(residual_mae_improvement, 1),
+            "rmse_improvement_pct": round(residual_rmse_improvement, 1),
         }
 
         baseline_maes.append(base_metrics["mae_hours"])
         baseline_rmses.append(base_metrics["rmse_hours"])
-        model_maes.append(model_metrics["mae_hours"])
-        model_rmses.append(model_metrics["rmse_hours"])
+        baseline_f1s.append(base_metrics["risk_f1"])
+
+        direct_maes.append(direct_metrics["mae_hours"])
+        direct_rmses.append(direct_metrics["rmse_hours"])
+        direct_f1s.append(direct_metrics["risk_f1"])
+
+        residual_maes.append(residual_metrics["mae_hours"])
+        residual_rmses.append(residual_metrics["rmse_hours"])
+        residual_f1s.append(residual_metrics["risk_f1"])
 
     # Macro averages across corridors
     macro_summary = {
         "mean_baseline_mae": round(float(np.mean(baseline_maes)), 3),
         "mean_baseline_rmse": round(float(np.mean(baseline_rmses)), 3),
-        "mean_model_mae": round(float(np.mean(model_maes)), 3),
-        "mean_model_rmse": round(float(np.mean(model_rmses)), 3),
+        "mean_baseline_f1": round(float(np.mean(baseline_f1s)), 3),
+        "mean_direct_mae": round(float(np.mean(direct_maes)), 3),
+        "mean_direct_rmse": round(float(np.mean(direct_rmses)), 3),
+        "mean_direct_f1": round(float(np.mean(direct_f1s)), 3),
+        "mean_residual_mae": round(float(np.mean(residual_maes)), 3),
+        "mean_residual_rmse": round(float(np.mean(residual_rmses)), 3),
+        "mean_residual_f1": round(float(np.mean(residual_f1s)), 3),
+        # Backwards-compatible aliases:
+        "mean_model_mae": round(float(np.mean(residual_maes)), 3),
+        "mean_model_rmse": round(float(np.mean(residual_rmses)), 3),
         "macro_mae_improvement_pct": round(
-            float((np.mean(baseline_maes) - np.mean(model_maes)) / np.mean(baseline_maes) * 100.0), 1
+            float((np.mean(baseline_maes) - np.mean(residual_maes)) / np.mean(baseline_maes) * 100.0), 1
         ),
         "macro_rmse_improvement_pct": round(
-            float((np.mean(baseline_rmses) - np.mean(model_rmses)) / np.mean(baseline_rmses) * 100.0), 1
+            float((np.mean(baseline_rmses) - np.mean(residual_rmses)) / np.mean(baseline_rmses) * 100.0), 1
+        ),
+        "direct_macro_mae_improvement_pct": round(
+            float((np.mean(baseline_maes) - np.mean(direct_maes)) / np.mean(baseline_maes) * 100.0), 1
+        ),
+        "direct_macro_rmse_improvement_pct": round(
+            float((np.mean(baseline_rmses) - np.mean(direct_rmses)) / np.mean(baseline_rmses) * 100.0), 1
         ),
         "total_evaluated_records": total_test_samples,
     }
@@ -150,20 +212,20 @@ def run_leave_one_corridor_out_evaluation(
 
 if __name__ == "__main__":
     res = run_leave_one_corridor_out_evaluation()
-    print("=" * 70)
+    print("=" * 84)
     print("LEAVE-ONE-CORRIDOR-OUT (LOCO) GENERALIZATION EVALUATION")
-    print("=" * 70)
+    print("=" * 84)
+    print(f"{'Corridor':<12} | {'Baseline MAE':<12} | {'Direct ML MAE':<15} | {'Residual ML MAE':<15} | {'Residual Impv'}")
+    print("-" * 84)
     for corr, m in res["by_corridor"].items():
         print(
-            f"Corridor {corr:<12} (N={m['n_samples']:<2}): "
-            f"Baseline MAE={m['baseline_mae']:>6.3f}h -> Model MAE={m['model_mae']:>6.3f}h "
-            f"({m['mae_improvement_pct']:>+5.1f}%) | "
-            f"RMSE: {m['baseline_rmse']:>6.3f}h -> {m['model_rmse']:>6.3f}h"
+            f"{corr:<12} | {m['baseline_mae']:>6.3f} hrs    | {m['direct_mae']:>6.3f} hrs ({m['direct_mae_improvement_pct']:>+5.1f}%) | "
+            f"{m['residual_mae']:>6.3f} hrs ({m['residual_mae_improvement_pct']:>+5.1f}%) | {m['residual_mae_improvement_pct']:>+5.1f}%"
         )
-    print("-" * 70)
+    print("-" * 84)
     ms = res["macro_summary"]
     print(
-        f"Macro Average: Baseline MAE={ms['mean_baseline_mae']:.3f}h -> "
-        f"Model MAE={ms['mean_model_mae']:.3f}h ({ms['macro_mae_improvement_pct']:+.1f}%) | "
-        f"RMSE={ms['mean_baseline_rmse']:.3f}h -> {ms['mean_model_rmse']:.3f}h ({ms['macro_rmse_improvement_pct']:+.1f}%)"
+        f"{'Macro Mean':<12} | {ms['mean_baseline_mae']:>6.3f} hrs    | {ms['mean_direct_mae']:>6.3f} hrs ({ms['direct_macro_mae_improvement_pct']:>+5.1f}%) | "
+        f"{ms['mean_residual_mae']:>6.3f} hrs ({ms['macro_mae_improvement_pct']:>+5.1f}%) | {ms['macro_mae_improvement_pct']:>+5.1f}%"
     )
+    print("=" * 84)
