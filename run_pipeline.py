@@ -41,26 +41,27 @@ def main() -> int:
     print(f"  -> All {test_result.testsRun} unit tests passed successfully!")
 
     # 3. Model Training & Evaluation
-    print("\n[Step 3/6] Training and evaluating baseline vs HistGradientBoostingRegressor...")
+    print("\n[Step 3/6] Training and evaluating baseline vs Direct vs Residual GBDT...")
     model_results = run_training_and_evaluation()
 
     base = model_results["baseline"]
     ml = model_results["hist_gradient_boosting"]
+    res_m = model_results["residual_model"]
 
-    print("\n" + "-" * 70)
+    print("\n" + "-" * 88)
     print(" EMPIRICAL EVALUATION METRICS (Chronological Held-Out Test Set, N=50)")
-    print("-" * 70)
-    print(f"{'Metric':<32} | {'Scheduled Baseline':<16} | {'HistGradientBoosting':<16} | {'Improvement':<12}")
-    print("-" * 70)
-    mae_diff = (base["mae_hours"] - ml["mae_hours"]) / base["mae_hours"] * 100
-    rmse_diff = (base["rmse_hours"] - ml["rmse_hours"]) / base["rmse_hours"] * 100
-    print(f"{'MAE (hours)':<32} | {base['mae_hours']:<16.3f} | {ml['mae_hours']:<16.3f} | -{mae_diff:.1f}%")
-    print(f"{'RMSE (hours)':<32} | {base['rmse_hours']:<16.3f} | {ml['rmse_hours']:<16.3f} | -{rmse_diff:.1f}%")
-    print(f"{'MAPE (%) [Caveat: zero-skew]':<32} | {base['mape_pct']:<16.2f} | {ml['mape_pct']:<16.2f} | -")
-    print(f"{'Delay Risk F1-Score (tau=6h)':<32} | {base['risk_f1']:<16.3f} | {ml['risk_f1']:<16.3f} | -")
-    print(f"{'Delay Risk Precision':<32} | {base['risk_precision']:<16.3f} | {ml['risk_precision']:<16.3f} | -")
-    print(f"{'Delay Risk Recall':<32} | {base['risk_recall']:<16.3f} | {ml['risk_recall']:<16.3f} | -")
-    print("-" * 70)
+    print("-" * 88)
+    print(f"{'Metric':<28} | {'Scheduled Base':<15} | {'Direct GBDT':<15} | {'Residual GBDT':<15} | {'Res vs Base':<12}")
+    print("-" * 88)
+    res_mae_diff = (base["mae_hours"] - res_m["mae_hours"]) / base["mae_hours"] * 100
+    res_rmse_diff = (base["rmse_hours"] - res_m["rmse_hours"]) / base["rmse_hours"] * 100
+    print(f"{'MAE (hours)':<28} | {base['mae_hours']:<15.3f} | {ml['mae_hours']:<15.3f} | {res_m['mae_hours']:<15.3f} | -{res_mae_diff:.1f}%")
+    print(f"{'RMSE (hours)':<28} | {base['rmse_hours']:<15.3f} | {ml['rmse_hours']:<15.3f} | {res_m['rmse_hours']:<15.3f} | -{res_rmse_diff:.1f}%")
+    print(f"{'MAPE (%) [zero-skew]':<28} | {base['mape_pct']:<15.2f} | {ml['mape_pct']:<15.2f} | {res_m['mape_pct']:<15.2f} | -")
+    print(f"{'Delay Risk F1-Score (6h)':<28} | {base['risk_f1']:<15.3f} | {ml['risk_f1']:<15.3f} | {res_m['risk_f1']:<15.3f} | -")
+    print(f"{'Delay Risk Precision':<28} | {base['risk_precision']:<15.3f} | {ml['risk_precision']:<15.3f} | {res_m['risk_precision']:<15.3f} | -")
+    print(f"{'Delay Risk Recall':<28} | {base['risk_recall']:<15.3f} | {ml['risk_recall']:<15.3f} | {res_m['risk_recall']:<15.3f} | -")
+    print("-" * 88)
 
     print("\nTop Feature Attributions (Permutation MAE Impact when Shuffled on Test Set):")
     for feat in model_results["feature_importances"][:6]:
@@ -91,18 +92,18 @@ def main() -> int:
 
     _, test_records = split_chronological(records)
     sample_shipment = test_records[0]
-    pipeline = model_results["pipeline"]
+    predictor = model_results["residual_predictor"]
 
     print("\n" + "-" * 70)
-    print(" 6A. LIVE OPERATIONAL PREDICTION (Strict Pre-Cutoff Quarantine)")
+    print(" 6A. LIVE OPERATIONAL PREDICTION (Strict Pre-Cutoff Quarantine - Residual GBDT)")
     print("-" * 70)
-    live_explanation = explain_shipment(sample_shipment, pipeline, mode="live")
+    live_explanation = explain_shipment(sample_shipment, predictor, mode="live")
     print(format_shipment_explanation(live_explanation))
 
     print("\n" + "-" * 70)
-    print(" 6B. RETROSPECTIVE EVALUATION AUDIT (Post-Delivery Evaluation)")
+    print(" 6B. RETROSPECTIVE EVALUATION AUDIT (Post-Delivery Evaluation - Residual GBDT)")
     print("-" * 70)
-    retro_explanation = explain_shipment(sample_shipment, pipeline, mode="retrospective")
+    retro_explanation = explain_shipment(sample_shipment, predictor, mode="retrospective")
     print(format_shipment_explanation(retro_explanation))
 
     print("\n" + "=" * 70)

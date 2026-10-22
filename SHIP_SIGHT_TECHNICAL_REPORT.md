@@ -17,7 +17,7 @@ This report presents **ShipSight**, an explainable machine learning system devel
 3. Model and quantify how delays accumulate, amplify, or absorb across a 5-stage shipment lifecycle.
 4. Provide rigorous feature attribution without introducing temporal lookahead leakage.
 
-Evaluating on a strictly chronological held-out test set ($N=50$, 60% on-time vs. 40% delayed), our scikit-learn `HistGradientBoostingRegressor` pipeline achieves an **MAE of 5.921 hours** and **RMSE of 7.237 hours**, representing a **44.2% error reduction in MAE** and **54.3% in RMSE** over the scheduled-duration baseline, which assumes that downstream stages finish within their scheduled allowances (MAE: 10.608 hours). On the derived delay-risk classification task, the model achieved a higher delay-risk F1-score than the scheduled-duration baseline on the held-out synthetic test set (**0.811** vs. **0.667**; Precision: 0.882, Recall: 0.750), while a majority-class classifier predicting all shipments on-time achieved an F1-score of 0.000.
+Evaluating on a strictly chronological held-out test set ($N=50$, 60% on-time vs. 40% delayed), our direct `HistGradientBoostingRegressor` achieves an **MAE of 5.921 hours** and **RMSE of 7.237 hours** (44.2% MAE reduction over the scheduled baseline at 10.608 hours). Our residual-learning formulation ($\text{residual} = y_{\text{actual}} - y_{\text{sched}}$, $\hat{y} = \max(0, y_{\text{sched}} + \hat{\text{residual}})$) further improves holdout performance to **5.414 hours MAE** (**-49.0% vs. baseline**, -8.6% vs. direct model) and **6.578 hours RMSE** (**-58.5% vs. baseline**). On the derived delay-risk classification task ($\tau = 6.0\text{h}$), both ML models achieve an F1-score of **0.811** (Precision: 0.882, Recall: 0.750), significantly outperforming the scheduled baseline (0.667 F1) and a majority-class benchmark (0.000 F1). Furthermore, within this synthetic five-corridor benchmark, residual learning resolved the direct model's out-of-distribution extrapolation deficit on the evaluated short-sea feeder lane.
 
 ---
 
@@ -106,9 +106,10 @@ The 250 records are sorted chronologically by `scheduled_departure_time`:
 - Hyperparameters were fixed a priori (`max_iter=100`, `max_depth=4`, `min_samples_leaf=10`, `learning_rate=0.08`, `random_state=42`) with **zero tuning on the test set**.
 
 ### Models Evaluated
-1. **Scheduled-Duration Baseline:** $\hat{y}_{\text{base}} = d_{i,3}^{\text{sched}} + d_{i,4}^{\text{sched}} + d_{i,5}^{\text{sched}}$, which assumes that downstream stages finish within their scheduled allowances.
-2. **HistGradientBoostingRegressor:** Scikit-learn pipeline using `OneHotEncoder(sparse_output=False, handle_unknown="ignore")` for categorical columns and `passthrough` for numerical features.
-3. **Majority-Class Classifier:** Benchmark predicting the most frequent training class (On-Time = 0).
+1. **Scheduled-Duration Baseline:** $\hat{y}_{\text{base}} = d_{i,3}^{\text{sched}} + d_{i,4}^{\text{sched}} + d_{i,5}^{\text{sched}}$, which assumes downstream stages finish within their scheduled allowances.
+2. **Direct HistGradientBoostingRegressor:** Pipeline predicting absolute remaining duration $y_{i,\text{rem}}$ directly using `OneHotEncoder` and `HistGradientBoostingRegressor`.
+3. **Residual Learning Predictor (`ResidualETAPredictor`):** Fits on the residual target $\Delta_{i,\text{rem}} = y_{i,\text{rem}} - d_{i,\text{downstream}}^{\text{sched}}$ and reconstructs duration as $\hat{y}_{i,\text{rem}} = \max(0, d_{i,\text{downstream}}^{\text{sched}} + \hat{\Delta}_{i,\text{rem}})$, reducing route-scale target disparity across the evaluated trade corridors.
+4. **Majority-Class Classifier:** Benchmark predicting the most frequent training class (On-Time = 0).
 
 ---
 
@@ -116,26 +117,26 @@ The 250 records are sorted chronologically by `scheduled_departure_time`:
 
 ### Performance Comparison on Held-Out Test Set ($N = 50$)
 
-| Evaluation Metric | Scheduled Baseline | HistGradientBoosting | Majority-Class (Always On-Time) | Improvement vs. Baseline |
-| :--- | :---: | :---: | :---: | :---: |
-| **MAE (hours)** | 10.608 hrs | **5.921 hrs** | — | **-44.2%** |
-| **RMSE (hours)** | 15.853 hrs | **7.237 hrs** | — | **-54.3%** |
-| **MAPE (%)** *(Caveat: zero-skew)* | 14.17% | **8.89%** | — | -37.3% |
-| **Delay-Risk Precision ($\tau = 6\text{h}$)** | 0.846 | **0.882** | 0.000 | +4.3% |
-| **Delay-Risk Recall ($\tau = 6\text{h}$)** | 0.550 | **0.750** | 0.000 | **+36.4%** |
-| **Delay-Risk F1-Score** | 0.667 | **0.811** | 0.000 | **+21.6%** |
+| Evaluation Metric | Scheduled Baseline | Direct GBDT | Residual GBDT | Majority-Class | Res. vs. Base |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **MAE (hours)** | 10.608 hrs | 5.921 hrs | **5.414 hrs** | — | **-49.0%** |
+| **RMSE (hours)** | 15.853 hrs | 7.237 hrs | **6.578 hrs** | — | **-58.5%** |
+| **MAPE (%)** *(Caveat: zero-skew)* | 14.17% | 8.89% | **8.09%** | — | -42.9% |
+| **Delay-Risk Precision ($\tau = 6\text{h}$)** | 0.846 | **0.882** | **0.882** | 0.000 | +4.3% |
+| **Delay-Risk Recall ($\tau = 6\text{h}$)** | 0.550 | **0.750** | **0.750** | 0.000 | **+36.4%** |
+| **Delay-Risk F1-Score** | 0.667 | **0.811** | **0.811** | 0.000 | **+21.6%** |
 
 ### Delay-Risk Confusion Matrices ($\tau = 6.0\text{ hours}$, Test $N = 50$)
 ```text
-Scheduled Baseline:                     HistGradientBoosting:
+Scheduled Baseline:                     Direct & Residual GBDT:
                Predicted                               Predicted
              On-Time  Delayed                        On-Time  Delayed
 True On-Time:  [ 28       2 ]          True On-Time:  [ 28       2 ]
 True Delayed:  [  9      11 ]          True Delayed:  [  5      15 ]
 ```
 - The Scheduled Baseline misclassified 9 delayed shipments as on-time (Recall: 55.0%) due to blindness to customs holds and yard friction.
-- `HistGradientBoosting` reduced false negatives from 9 to 5, boosting recall to **75.0%** and precision to **88.2%**, achieving an F1-score of **0.811**.
-- The majority-class classifier predicts On-Time for all 50 shipments, achieving 60.0% accuracy but **0.000 F1 on delayed shipments**. The model achieved a higher delay-risk F1-score than the scheduled-duration baseline on the held-out synthetic test set.
+- Both Direct and Residual GBDT reduced false negatives from 9 to 5, boosting recall to **75.0%** and precision to **88.2%**, achieving an F1-score of **0.811**.
+- The majority-class classifier predicts On-Time for all 50 shipments, achieving 60.0% accuracy but **0.000 F1 on delayed shipments**. Both ML models significantly outperform the scheduled baseline.
 
 ---
 
@@ -166,8 +167,17 @@ Tracking cumulative delay $D_k = D_{k-1} + \delta_k$ across all 250 journeys:
 
 ### Unseen-Corridor Generalization (LOCO Cross-Validation)
 Holding out each corridor in turn evaluates out-of-distribution route transfer across all 5 corridors:
-- **Long-Haul Lanes:** Strong generalization on CNSHA-USLAX (MAE: 8.531h vs. 11.037h base, +22.7%; RMSE: 9.768h vs. 16.977h) and INNSA-GBFXT (MAE: 6.756h vs. 11.978h base, +43.6%; RMSE: 8.013h vs. 19.343h). BEANR-USNYC matched baseline MAE (10.766h vs. 10.769h) while improving RMSE (+36.8%).
-- **Feeder Extrapolation Deficit:** On the regional feeder route KRPUS-JPYOK (620 nm), the model degraded (-142.2% MAE, 20.779h vs. 8.578h). Training on long-haul routes with larger downstream scheduled allowances (60–80h vs. 44h) caused the ensemble to systematically overpredict feeder dwell. Macro RMSE improved +23.2% (12.584h vs. 16.394h) while macro MAE was 11.483h vs. 10.310h (-11.4%).
+
+| Held-Out Corridor | Baseline MAE | Direct GBDT MAE | Residual GBDT MAE | Residual vs. Base |
+| :--- | :---: | :---: | :---: | :---: |
+| **BEANR-USNYC** (3,450 nm) | 10.769 hrs | 10.766 hrs (+0.0%) | **5.715 hrs** | **+46.9%** |
+| **CNSHA-USLAX** (5,700 nm) | 11.037 hrs | 8.531 hrs (+22.7%) | **4.772 hrs** | **+56.8%** |
+| **INNSA-GBFXT** (6,400 nm) | 11.978 hrs | 6.756 hrs (+43.6%) | **5.513 hrs** | **+54.0%** |
+| **KRPUS-JPYOK** (620 nm feeder) | 8.578 hrs | 20.779 hrs (-142.2%) | **4.459 hrs** | **+48.0%** |
+| **SGSIN-NLRTM** (8,300 nm) | 9.186 hrs | 10.585 hrs (-15.2%) | **5.714 hrs** | **+37.8%** |
+| **Macro Average** | 10.310 hrs | 11.483 hrs (-11.4%) | **5.235 hrs** | **+49.2%** |
+
+*Root Cause Analysis & Residual Resolution:* Direct GBDT failed on feeder `KRPUS-JPYOK` (-142.2% deficit) because decision trees cannot extrapolate below the minimum leaf targets observed in training ($y_{\text{train}} \in [55, 115\text{h}]$ vs. feeder allowance $44\text{h}$). By reformulating the target as schedule residual $\Delta_{\text{rem}}$, targets reflect zero-centered downstream slippage ($\Delta_{\text{rem}} \approx [-4, +40\text{h}]$ in this benchmark) rather than route distance. In this experiment, Residual GBDT resolved the feeder extrapolation deficit (4.459h vs. 8.578h base) and outperformed the scheduled baseline across all 5 evaluated corridors, improving macro MAE by **+49.2%** and macro RMSE by **+58.7%** (6.778h vs. 16.394h). These gains reflect parametric behavior in this 5-corridor simulation and do not constitute universal real-world generalization guarantees.
 
 ### Customs Feature Ablation & Controlled Disruption
 - **Ablation:** Omitting `customs_inspection_flag` inflates test MAE from 5.921h to 11.599h (+95.9%) and RMSE from 7.237h to 15.766h (+117.9%), dropping delay-risk F1 from 0.811 to 0.605. Without advance manifest notice, the model performs worse than the scheduled baseline (10.608h MAE).
@@ -177,12 +187,14 @@ Holding out each corridor in turn evaluates out-of-distribution route transfer a
 ShipSight provides auditable shipment-level explanations (`src/shipment_explainer.py`) with strict operational separation:
 - **Live Prediction Mode (`mode="live"`):** Enforces complete pre-cutoff quarantine. Reports prediction cutoff ($T_2^{\text{actual}}$), accumulated delay ($D_2$), scheduled remaining allowance, predicted remaining duration, predicted final ETA, and predicted delay relative to schedule. Downstream actual delivery timestamps, realized delays, forecast errors, and ground-truth risk are strictly suppressed.
 - **Retrospective Evaluation Mode (`mode="retrospective"`):** Post-delivery audit mode comparing operational forecasts against realized delivery timestamps, actual final delay, and forecast error margins.
-- **Fitted Model Scenario Sensitivity:** Evaluates the actual fitted pipeline on modified copies of admissible features (e.g., toggling `customs_inspection_flag: 0 <-> 1` shifts predicted remaining duration by +44.95h on test shipment SHP-201). These shifts are explicitly classified as statistical model sensitivities—**not physical causal attributions, not counterfactual guarantees, and not additive SHAP values**.
+- **Fitted Model Scenario Sensitivity:** Evaluates the actual fitted pipeline on modified copies of admissible features (e.g., toggling `customs_inspection_flag: 0 <-> 1` shifts predicted remaining duration by +34.42h on test shipment SHP-201). These shifts are explicitly classified as statistical model sensitivities—**not physical causal attributions, not counterfactual guarantees, and not additive SHAP values**.
 
 ### Repeated-Seed Stability Evaluation (10 Deterministic Runs)
-Across 10 random seeds ($N=2,500$ shipments total, 80/20 chronological split per seed), HistGradientBoosting beat the scheduled baseline on MAE in **10 out of 10 runs (100%)**:
+Across 10 random seeds ($N=2,500$ shipments total, 80/20 chronological split per seed):
 - **Baseline:** MAE = $10.643 \pm 1.928\text{h}$, RMSE = $16.738 \pm 2.491\text{h}$, Delay-Risk F1 = $0.706 \pm 0.094$.
-- **HistGradientBoosting:** MAE = $4.915 \pm 0.608\text{h}$ (**-53.0%**), RMSE = $6.436 \pm 0.798\text{h}$ (**-61.1%**), Delay-Risk F1 = $0.883 \pm 0.046$.
+- **Direct GBDT:** MAE = $4.915 \pm 0.608\text{h}$ (**+53.0%** mean reduction, $\text{std}: 6.5\%$), RMSE = $6.436 \pm 0.798\text{h}$ (**+61.1%** mean reduction, $\text{std}: 5.1\%$), Delay-Risk F1 = $0.883 \pm 0.046$.
+- **Residual GBDT:** MAE = **$4.678 \pm 0.405\text{h}$** (**+55.2%** mean reduction, $\text{std}: 5.8\%$), RMSE = **$6.054 \pm 0.464\text{h}$** (**+63.3%** mean reduction, $\text{std}: 4.1\%$), Delay-Risk F1 = **$0.894 \pm 0.045$**. Both ML models beat the scheduled baseline on MAE in **10 out of 10 runs (100%)**.
+*(Note: Reductions are evaluated per seed as `((baseline - model) / baseline) * 100`. Mean per-seed MAE reduction is $+55.2\% \pm 5.8\%$ for Residual and $+53.0\% \pm 6.5\%$ for Direct; evaluating aggregate mean MAEs yields $56.0\%$ and $53.8\%$. Mean per-seed RMSE reduction is $+63.3\% \pm 4.1\%$ for Residual and $+61.1\% \pm 5.1\%$ for Direct; evaluating aggregate mean RMSEs yields $63.8\%$ and $61.5\%$.)*
 
 ---
 
@@ -195,7 +207,7 @@ Across 10 random seeds ($N=2,500$ shipments total, 80/20 chronological split per
 5. **Single-Leg Simplification:** The system models point-to-point intermodal lanes without multi-port container restowage or feeder transshipment connections.
 6. **No Production Readiness Claim:** ShipSight is an explainable proof-of-concept pipeline designed to evaluate multi-stage delay propagation without target leakage.
 7. **Exploratory AIS Audit Provenance:** Preliminary telemetry audit findings from NOAA MarineCadastre and AISHub reflect exploratory scoping not bundled in or reproducible from this submitted archive; they serve solely as methodological rationale for adopting a multi-stage benchmark.
-8. **Unseen Route Transfer Boundary:** Model transfer between disparate route topologies (long-haul transoceanic vs. short-sea regional feeders) requires lane-specific normalization or stratified corridor training.
+8. **Unseen Route Transfer & Schedule Reliance:** Direct duration models fail on short-sea routes due to tree leaf bounding. While residual learning eliminated the feeder deficit across the 5 synthetic test corridors (+49.2% macro MAE improvement), this is observed under our simulation equations and is not a universal generalization guarantee. It inherently relies on having reliable scheduled stage buffers at cutoff; unexpected contractual schedule shifts or corrupted schedule metadata would directly affect residual reconstruction offsets.
 9. **Parametric Simulation Scope:** Multi-seed stability evaluates algorithmic consistency across pseudo-random generator draws; it does not constitute empirical significance on live telemetry.
 10. **Model Sensitivity vs. Causal Attribution:** What-if scenario sensitivity reflects the local gradient of the fitted regression estimator under perturbed inputs; it does not guarantee that physical interventions on port operations or customs policy would yield identical real-world results.
 
