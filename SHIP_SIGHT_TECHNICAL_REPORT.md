@@ -117,7 +117,7 @@ The 250 records are sorted chronologically by `scheduled_departure_time`:
 
 ### Performance Comparison on Held-Out Test Set ($N = 50$)
 
-| Evaluation Metric | Scheduled Baseline | Direct GBDT | Residual GBDT | Majority-Class | Res. vs. Base |
+| Evaluation Metric | Scheduled Baseline | Direct GBDT Benchmark | Final Residual GBDT | Majority-Class | Res. vs. Base |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **MAE (hours)** | 10.608 hrs | 5.921 hrs | **5.414 hrs** | — | **-49.0%** |
 | **RMSE (hours)** | 15.853 hrs | 7.237 hrs | **6.578 hrs** | — | **-58.5%** |
@@ -135,7 +135,7 @@ True On-Time:  [ 28       2 ]          True On-Time:  [ 28       2 ]
 True Delayed:  [  9      11 ]          True Delayed:  [  5      15 ]
 ```
 - The Scheduled Baseline misclassified 9 delayed shipments as on-time (Recall: 55.0%) due to blindness to customs holds and yard friction.
-- Both Direct and Residual GBDT reduced false negatives from 9 to 5, boosting recall to **75.0%** and precision to **88.2%**, achieving an F1-score of **0.811**.
+- Both the Direct GBDT Benchmark and Final Residual GBDT reduced false negatives from 9 to 5, boosting recall to **75.0%** and precision to **88.2%**, achieving an F1-score of **0.811**.
 - The majority-class classifier predicts On-Time for all 50 shipments, achieving 60.0% accuracy but **0.000 F1 on delayed shipments**. Both ML models significantly outperform the scheduled baseline.
 
 ---

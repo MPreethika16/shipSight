@@ -161,7 +161,7 @@ python -m pytest -v
 
 ### 7.1 Primary Chronological Benchmark ($N_{\text{test}} = 50$)
 
-| Evaluation Metric | Scheduled Baseline | Direct GBDT | Residual GBDT | Majority-Class | Res. vs. Base |
+| Evaluation Metric | Scheduled Baseline | Direct GBDT Benchmark | Final Residual GBDT | Majority-Class (Always On-Time) | Res. vs. Base |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **MAE (hours)** | 10.608 hrs | 5.921 hrs | **5.414 hrs** | — | **-49.0%** |
 | **RMSE (hours)** | 15.853 hrs | 7.237 hrs | **6.578 hrs** | — | **-58.5%** |
@@ -174,16 +174,18 @@ python -m pytest -v
 
 #### Confusion Matrices ($\tau = 6.0\text{ hours}$, Labels: [0 = On-Time, 1 = Delayed])
 - **Test Set Ground Truth:** 30 On-Time (60%), 20 Delayed (40%).
-- **Scheduled Baseline:** `[[28, 2], [9, 11]]` (misclassified 9 delayed shipments as on-time; Recall = 55.0%).
-- **Direct & Residual GBDT:** `[[28, 2], [5, 15]]` (reduced false negatives to 5, achieving Recall = 75.0% and F1 = 0.811).
-- **Majority-Class Benchmark:** `[[30, 0], [20, 0]]` (Accuracy: 60.0%, Precision: 0.0, Recall: 0.0, F1: 0.000).
+- **Scheduled Baseline:** `[[28, 2], [9, 11]]` (misclassified 9 delayed shipments as on-time; Recall = 55.0%, F1 = 0.667).
+- **Direct GBDT Benchmark:** `[[28, 2], [5, 15]]` (reduced false negatives to 5, achieving Precision = 88.2%, Recall = 75.0%, and F1 = 0.811).
+- **Final Residual GBDT:** `[[28, 2], [5, 15]]` (identically matched the classification boundary on this test partition: Precision = 88.2%, Recall = 75.0%, and F1 = 0.811).
+- **Majority-Class (Always On-Time) Benchmark:** `[[30, 0], [20, 0]]` (Accuracy: 60.0%, Precision: 0.0, Recall: 0.0, F1 = 0.000).
 
-#### Permutation Feature Importance (MAE Degradation When Shuffled)
+#### Permutation Feature Importance (MAE Degradation When Shuffled on Test Set)
 1. `customs_inspection_flag`: **+8.870 hrs**
 2. `transit_distance_nm`: **+4.252 hrs**
 3. `route_id`: **+1.638 hrs**
 4. `container_teu`: **+0.053 hrs**
 5. `port_congestion_index`: **+0.048 hrs**
+6. `carrier_code`: **+0.001 hrs**
 
 #### Stage-to-Stage Delay Transmission Dynamics
 - **Departure $\rightarrow$ Anchorage:** Transmission slope = **$0.555$** (schedule allowances and speed adjustments absorb departure delays).
