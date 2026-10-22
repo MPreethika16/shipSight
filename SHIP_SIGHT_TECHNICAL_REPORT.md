@@ -172,7 +172,12 @@ Holding out each corridor in turn evaluates out-of-distribution route transfer a
 ### Customs Feature Ablation & Controlled Disruption
 - **Ablation:** Omitting `customs_inspection_flag` inflates test MAE from 5.921h to 11.599h (+95.9%) and RMSE from 7.237h to 15.766h (+117.9%), dropping delay-risk F1 from 0.811 to 0.605. Without advance manifest notice, the model performs worse than the scheduled baseline (10.608h MAE).
 - **Disruption Scenarios:** A +0.35 port congestion index surge shifts model forecast by +0.123h. An unannounced +24.0h physical customs hold increases model test MAE from 5.921h to 7.557h (while baseline MAE spikes to 14.928h).
-- **Shipment Explanations:** Individual predictions deconstruct observed upstream delay at berthing ($D_2$) from downstream model slippage, providing auditability without target leakage.
+
+### Shipment-Level Explanations & Fitted Model Sensitivity
+ShipSight provides auditable shipment-level explanations (`src/shipment_explainer.py`) with strict operational separation:
+- **Live Prediction Mode (`mode="live"`):** Enforces complete pre-cutoff quarantine. Reports prediction cutoff ($T_2^{\text{actual}}$), accumulated delay ($D_2$), scheduled remaining allowance, predicted remaining duration, predicted final ETA, and predicted delay relative to schedule. Downstream actual delivery timestamps, realized delays, forecast errors, and ground-truth risk are strictly suppressed.
+- **Retrospective Evaluation Mode (`mode="retrospective"`):** Post-delivery audit mode comparing operational forecasts against realized delivery timestamps, actual final delay, and forecast error margins.
+- **Fitted Model Scenario Sensitivity:** Evaluates the actual fitted pipeline on modified copies of admissible features (e.g., toggling `customs_inspection_flag: 0 <-> 1` shifts predicted remaining duration by +44.95h on test shipment SHP-201). These shifts are explicitly classified as statistical model sensitivities—**not physical causal attributions, not counterfactual guarantees, and not additive SHAP values**.
 
 ### Repeated-Seed Stability Evaluation (10 Deterministic Runs)
 Across 10 random seeds ($N=2,500$ shipments total, 80/20 chronological split per seed), HistGradientBoosting beat the scheduled baseline on MAE in **10 out of 10 runs (100%)**:
@@ -192,6 +197,7 @@ Across 10 random seeds ($N=2,500$ shipments total, 80/20 chronological split per
 7. **Exploratory AIS Audit Provenance:** Preliminary telemetry audit findings from NOAA MarineCadastre and AISHub reflect exploratory scoping not bundled in or reproducible from this submitted archive; they serve solely as methodological rationale for adopting a multi-stage benchmark.
 8. **Unseen Route Transfer Boundary:** Model transfer between disparate route topologies (long-haul transoceanic vs. short-sea regional feeders) requires lane-specific normalization or stratified corridor training.
 9. **Parametric Simulation Scope:** Multi-seed stability evaluates algorithmic consistency across pseudo-random generator draws; it does not constitute empirical significance on live telemetry.
+10. **Model Sensitivity vs. Causal Attribution:** What-if scenario sensitivity reflects the local gradient of the fitted regression estimator under perturbed inputs; it does not guarantee that physical interventions on port operations or customs policy would yield identical real-world results.
 
 ---
 

@@ -23,13 +23,13 @@ def main() -> int:
     print("=" * 70)
 
     # 1. Generate Synthetic Dataset
-    print("\n[Step 1/5] Generating 250-row synthetic shipment dataset...")
+    print("\n[Step 1/6] Generating 250-row synthetic shipment dataset...")
     records = generate_synthetic_shipments(num_shipments=250, seed=42)
     csv_path = export_synthetic_csv(records)
     print(f"  -> Generated {len(records)} records saved to {csv_path}")
 
     # 2. Run Automated Verification Tests
-    print("\n[Step 2/5] Running automated pipeline integrity test suite...")
+    print("\n[Step 2/6] Running automated pipeline integrity test suite...")
     loader = unittest.TestLoader()
     suite = loader.discover("tests", pattern="test_*.py")
     runner = unittest.TextTestRunner(verbosity=1)
@@ -41,7 +41,7 @@ def main() -> int:
     print(f"  -> All {test_result.testsRun} unit tests passed successfully!")
 
     # 3. Model Training & Evaluation
-    print("\n[Step 3/5] Training and evaluating baseline vs HistGradientBoostingRegressor...")
+    print("\n[Step 3/6] Training and evaluating baseline vs HistGradientBoostingRegressor...")
     model_results = run_training_and_evaluation()
 
     base = model_results["baseline"]
@@ -67,12 +67,12 @@ def main() -> int:
         print(f"  * {feat['feature']:<28}: +{feat['mean_mae_increase']:.3f} hrs error (std: {feat['std']:.3f})")
 
     # 4. Repeated-Seed Stability Evaluation
-    print("\n[Step 4/5] Evaluating pipeline stability across 10 deterministic random seeds...")
+    print("\n[Step 4/6] Evaluating pipeline stability across 10 deterministic random seeds...")
     seed_results = run_repeated_seed_evaluation()
     print("\n" + format_repeated_seed_summary(seed_results))
 
     # 5. Delay Propagation Analysis
-    print("\n[Step 5/5] Analyzing stage-by-stage delay propagation dynamics...")
+    print("\n[Step 5/6] Analyzing stage-by-stage delay propagation dynamics...")
     prop_results = analyze_delay_propagation(records)
 
     print("\nEmpirical Delay Transmission Slopes across Stages (Delta D_k / Delta D_{k-1}):")
@@ -83,6 +83,27 @@ def main() -> int:
     print(f"  * Inspected Containers ({prop_results['customs_impact']['inspected_count']} shipments): Mean dwell = {prop_results['customs_impact']['avg_customs_hours_inspected']} hrs")
     print(f"  * Auto-Cleared Containers ({prop_results['customs_impact']['auto_cleared_count']} shipments): Mean dwell = {prop_results['customs_impact']['avg_customs_hours_auto_cleared']} hrs")
     print(f"  * Net Disruption Penalty: +{prop_results['customs_impact']['added_delay_from_inspection_hrs']} hrs")
+
+    # 6. Live Prediction Explainer & Retrospective Evaluation Demo
+    print("\n[Step 6/6] Demonstrating Live Prediction Explainer & Retrospective Audit...")
+    from src.model import split_chronological
+    from src.shipment_explainer import explain_shipment, format_shipment_explanation
+
+    _, test_records = split_chronological(records)
+    sample_shipment = test_records[0]
+    pipeline = model_results["pipeline"]
+
+    print("\n" + "-" * 70)
+    print(" 6A. LIVE OPERATIONAL PREDICTION (Strict Pre-Cutoff Quarantine)")
+    print("-" * 70)
+    live_explanation = explain_shipment(sample_shipment, pipeline, mode="live")
+    print(format_shipment_explanation(live_explanation))
+
+    print("\n" + "-" * 70)
+    print(" 6B. RETROSPECTIVE EVALUATION AUDIT (Post-Delivery Evaluation)")
+    print("-" * 70)
+    retro_explanation = explain_shipment(sample_shipment, pipeline, mode="retrospective")
+    print(format_shipment_explanation(retro_explanation))
 
     print("\n" + "=" * 70)
     print(" PIPELINE EXECUTION COMPLETED SUCCESSFULLY WITH ZERO FAILURES")
