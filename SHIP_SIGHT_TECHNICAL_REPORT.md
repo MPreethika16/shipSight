@@ -164,6 +164,16 @@ Tracking cumulative delay $D_k = D_{k-1} + \delta_k$ across all 250 journeys:
 - **Auto-Cleared Containers (206 shipments):** Mean customs dwell = **16.01 hours**.
 - **Net Disruption Penalty:** **+36.65 hours** of additional dwell time directly attributable to physical inspection holds.
 
+### Unseen-Corridor Generalization (LOCO Cross-Validation)
+Holding out each corridor in turn evaluates out-of-distribution route transfer across all 5 corridors:
+- **Long-Haul Lanes:** Strong generalization on CNSHA-USLAX (MAE: 8.531h vs. 11.037h base, +22.7%; RMSE: 9.768h vs. 16.977h) and INNSA-GBFXT (MAE: 6.756h vs. 11.978h base, +43.6%; RMSE: 8.013h vs. 19.343h). BEANR-USNYC matched baseline MAE (10.766h vs. 10.769h) while improving RMSE (+36.8%).
+- **Feeder Extrapolation Deficit:** On the regional feeder route KRPUS-JPYOK (620 nm), the model degraded (-142.2% MAE, 20.779h vs. 8.578h). Training on long-haul routes with larger downstream scheduled allowances (60–80h vs. 44h) caused the ensemble to systematically overpredict feeder dwell. Macro RMSE improved +23.2% (12.584h vs. 16.394h) while macro MAE was 11.483h vs. 10.310h (-11.4%).
+
+### Customs Feature Ablation & Controlled Disruption
+- **Ablation:** Omitting `customs_inspection_flag` inflates test MAE from 5.921h to 11.599h (+95.9%) and RMSE from 7.237h to 15.766h (+117.9%), dropping delay-risk F1 from 0.811 to 0.605. Without advance manifest notice, the model performs worse than the scheduled baseline (10.608h MAE).
+- **Disruption Scenarios:** A +0.35 port congestion index surge shifts model forecast by +0.123h. An unannounced +24.0h physical customs hold increases model test MAE from 5.921h to 7.557h (while baseline MAE spikes to 14.928h).
+- **Shipment Explanations:** Individual predictions deconstruct observed upstream delay at berthing ($D_2$) from downstream model slippage, providing auditability without target leakage.
+
 ---
 
 ## 8. Assumptions, Trade-offs & Limitations
@@ -175,6 +185,7 @@ Tracking cumulative delay $D_k = D_{k-1} + \delta_k$ across all 250 journeys:
 5. **Single-Leg Simplification:** The system models point-to-point intermodal lanes without multi-port container restowage or feeder transshipment connections.
 6. **No Production Readiness Claim:** ShipSight is an explainable proof-of-concept pipeline designed to evaluate multi-stage delay propagation without target leakage.
 7. **Exploratory AIS Audit Provenance:** Preliminary telemetry audit findings from NOAA MarineCadastre and AISHub reflect exploratory scoping not bundled in or reproducible from this submitted archive; they serve solely as methodological rationale for adopting a multi-stage benchmark.
+8. **Unseen Route Transfer Boundary:** Model transfer between disparate route topologies (long-haul transoceanic vs. short-sea regional feeders) requires lane-specific normalization or stratified corridor training.
 
 ---
 

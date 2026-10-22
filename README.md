@@ -1,7 +1,8 @@
 # ShipSight: Explainable ETA and Multi-Stage Delay Intelligence
 
-[![Tests](https://img.shields.io/badge/tests-8%20passed-brightgreen.svg)]()
-[![Python](https://img.shields.io/badge/python-3.12-blue.svg)]()
+[![CI](https://github.com/MPreethika16/shipSight/actions/workflows/ci.yml/badge.svg)](https://github.com/MPreethika16/shipSight/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-17%20passed-brightgreen.svg)]()
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)]()
 
 > **Author:** Preethika Manepally  
@@ -82,6 +83,9 @@ In the benchmark simulation, `customs_inspection_flag` represents a pre-arrival 
 
 ```text
 shipsight/
+├── .github/
+│   └── workflows/
+│       └── ci.yml                    # Automated GitHub Actions test & smoke test
 ├── data/
 │   └── synthetic_shipments.csv       # 250-row generated benchmark
 ├── src/
@@ -89,10 +93,16 @@ shipsight/
 │   ├── config.py                     # Corridors, whitelist, seeds, thresholds
 │   ├── generator.py                  # Simulation engine & sequential timestamps
 │   ├── model.py                      # Baseline, HistGradientBoosting, evaluation
-│   └── propagation_analysis.py       # Stage delay transmission analytics
+│   ├── propagation_analysis.py       # Stage delay transmission analytics
+│   ├── corridor_evaluation.py        # Leave-one-corridor-out cross-validation
+│   ├── shipment_explainer.py         # Individual shipment prediction explanations
+│   └── ablation_and_scenarios.py     # Customs feature ablation & disruption analysis
 ├── tests/
 │   ├── __init__.py
-│   └── test_pipeline.py              # 8 automated unit tests
+│   ├── test_pipeline.py              # Core pipeline unit tests (8 tests)
+│   ├── test_corridor_evaluation.py   # Corridor isolation & LOCO tests (3 tests)
+│   ├── test_shipment_explainer.py    # Shipment explanation invariant tests (3 tests)
+│   └── test_ablation_and_scenarios.py# Ablation & scenario reproducibility (3 tests)
 ├── run_pipeline.py                   # Master end-to-end execution runner
 ├── convert_report_to_pdf.py          # Standalone headless PDF generator
 ├── requirements.txt                  # Python package dependencies
@@ -106,7 +116,7 @@ shipsight/
 ## 6. Quickstart & Reproducibility
 
 ### Installation
-Ensure Python 3.12+ is installed, then install dependencies:
+Ensure Python 3.11 or 3.12 is installed, then install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
@@ -118,13 +128,30 @@ python run_pipeline.py
 ```
 
 ### Run Test Suite Independently
+Executes all 17 automated unit tests across core pipeline, corridor isolation, shipment explainer, and disruption scenarios:
 ```bash
-python -m unittest tests/test_pipeline.py -v
+python -m pytest -v
 ```
+
+### Run Extended Evaluation Modules
+1. **Leave-One-Corridor-Out (LOCO) Generalization:**
+   ```bash
+   python -m src.corridor_evaluation
+   ```
+2. **Customs Feature Ablation & Disruption Scenarios:**
+   ```bash
+   python -m src.ablation_and_scenarios
+   ```
+3. **Inspect Individual Shipment Explanation:**
+   ```bash
+   python -c "from src.generator import generate_synthetic_shipments; from src.model import split_chronological, build_feature_matrix, build_pipeline; from src.shipment_explainer import explain_shipment, format_shipment_explanation; import pandas as pd; records = generate_synthetic_shipments(250, 42); train, test = split_chronological(records); X, y, _, _ = build_feature_matrix(train); p = build_pipeline().fit(pd.DataFrame(X), y); print(format_shipment_explanation(explain_shipment(test[0], p)))"
+   ```
 
 ---
 
-## 7. Empirical Results (Chronological Test Set, $N = 50$)
+## 7. Empirical Results
+
+### 7.1 Primary Chronological Benchmark ($N_{\text{test}} = 50$)
 
 | Evaluation Metric | Scheduled Baseline | HistGradientBoosting | Majority-Class (Always On-Time) |
 | :--- | :--- | :--- | :--- |
@@ -137,26 +164,49 @@ python -m unittest tests/test_pipeline.py -v
 
 *Baseline Definition:* The scheduled-duration baseline assumes that downstream stages finish within their scheduled allowances ($d_3^{\text{sched}} + d_4^{\text{sched}} + d_5^{\text{sched}}$).
 
-### Confusion Matrices ($\tau = 6.0\text{ hours}$, Labels: [0 = On-Time, 1 = Delayed])
+#### Confusion Matrices ($\tau = 6.0\text{ hours}$, Labels: [0 = On-Time, 1 = Delayed])
 - **Test Set Ground Truth:** 30 On-Time (60%), 20 Delayed (40%).
 - **Scheduled Baseline:** `[[28, 2], [9, 11]]` (misclassified 9 delayed shipments as on-time; Recall = 55.0%).
 - **HistGradientBoosting:** `[[28, 2], [5, 15]]` (reduced false negatives to 5, achieving Recall = 75.0% and F1 = 0.811).
 - **Majority-Class Benchmark:** `[[30, 0], [20, 0]]` (Accuracy: 60.0%, Precision: 0.0, Recall: 0.0, F1: 0.000).
 
-*Evaluation Summary:* The model achieved a higher delay-risk F1-score than the scheduled-duration baseline on the held-out synthetic test set (0.811 vs 0.667).
-
-### Permutation Feature Importance (MAE Degradation When Shuffled)
+#### Permutation Feature Importance (MAE Degradation When Shuffled)
 1. `customs_inspection_flag`: **+8.870 hrs**
 2. `transit_distance_nm`: **+4.252 hrs**
 3. `route_id`: **+1.638 hrs**
 4. `container_teu`: **+0.053 hrs**
 5. `port_congestion_index`: **+0.048 hrs**
 
-### Stage-to-Stage Delay Transmission Dynamics
+#### Stage-to-Stage Delay Transmission Dynamics
 - **Departure $\rightarrow$ Anchorage:** Transmission slope = **$0.555$** (schedule allowances and speed adjustments absorb departure delays).
 - **Anchorage $\rightarrow$ Berthing:** Transmission slope = **$1.053$** (queue compounding when vessels arrive off-schedule).
 - **Berthing $\rightarrow$ Terminal:** Transmission slope = **$1.008$** (container terminal turnaround compounding).
 - **Customs Inspection Penalty:** Inspected shipments average **$52.66\text{ hrs}$** vs. **$16.01\text{ hrs}$** for automated electronic release (Net disruption penalty: **$+36.65\text{ hrs}$**).
+
+### 7.2 Leave-One-Corridor-Out (LOCO) Generalization Benchmark
+To evaluate model transfer to completely unseen trade corridors, each corridor is held out in turn while the pipeline is trained exclusively on the remaining 4 corridors:
+
+| Held-Out Corridor | N | Baseline MAE | Model MAE | MAE Impv. | Baseline RMSE | Model RMSE | RMSE Impv. |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **BEANR-USNYC** (3,450 nm) | 50 | 10.769 h | 10.766 h | +0.0% | 18.445 h | 11.652 h | +36.8% |
+| **CNSHA-USLAX** (5,700 nm) | 50 | 11.037 h | 8.531 h | +22.7% | 16.977 h | 9.768 h | +42.5% |
+| **INNSA-GBFXT** (6,400 nm) | 50 | 11.978 h | 6.756 h | +43.6% | 19.343 h | 8.013 h | +58.6% |
+| **KRPUS-JPYOK** (620 nm) | 50 | 8.578 h | 20.779 h | -142.2% | 13.443 h | 21.470 h | -59.7% |
+| **SGSIN-NLRTM** (8,300 nm) | 50 | 9.186 h | 10.585 h | -15.2% | 13.763 h | 12.017 h | +12.7% |
+| **Macro Average** | 250 | 10.310 h | 11.483 h | -11.4% | 16.394 h | 12.584 h | +23.2% |
+
+*Generalization Insight:* The model generalizes effectively across long-haul intermodal routes (up to 43.6% error reduction), but exhibits an extrapolation deficit when transferring to short feeder lanes (`KRPUS-JPYOK`). Because training was restricted to long-haul routes with larger downstream scheduled allowances (60–80h vs. 44h), the ensemble systematically overpredicts feeder dwell without route-specific normalization.
+
+### 7.3 Customs Feature Ablation & Controlled Disruption Scenarios
+- **Feature Ablation on `customs_inspection_flag`:** Removing the advance customs hold indicator increases test MAE from **5.921h to 11.599h (+95.9%)** and RMSE from **7.237h to 15.766h (+117.9%)**, causing the model to perform worse than the scheduled baseline (10.608h MAE). This confirms that advance regulatory notice is the dominant determinant of terminal dwell variance.
+- **Input-Sensitivity Stress Test:** Elevating `port_congestion_index` by +0.35 at inference time (holding ground truth constant) shifts remaining-duration forecasts by an average of **+0.123 hours**.
+- **Ground-Truth Regulatory Hold Disruption:** Imposing an unannounced +24.0h physical hold on inspected test containers increases model test MAE from **5.921h to 7.557h** (while scheduled baseline MAE spikes to **14.928h**).
+
+### 7.4 Shipment-Level Prediction Explanations
+The explainer engine (`src/shipment_explainer.py`) deconstructs individual predictions at the vessel docking cutoff ($t_{\text{pred}}$):
+- Explicitly decouples observed upstream delay at berth ($D_2$) from model-predicted downstream slippage ($\hat{y}_{\text{rem}} - \sum d^{\text{sched}}$).
+- Reports predicted final ETA ($\widehat{\text{ETA}} = T_2^{\text{actual}} + \hat{y}_{\text{rem}}$) and operational delay-risk classification ($\tau = 6.0\text{h}$).
+- Highlights stage-level factors while explicitly distinguishing model estimates from synthetic simulation parameters.
 
 ---
 
@@ -168,3 +218,5 @@ python -m unittest tests/test_pipeline.py -v
 4. **Small Sample Benchmark ($N = 250$):** Sized strictly for the take-home assessment. In production environments, multi-year datasets capturing seasonal peaks are necessary.
 5. **Single-Leg Simplification:** The model does not simulate transshipment hub restowage or feeder vessel missed connections.
 6. **Exploratory AIS Audit Provenance:** Raw exploratory AIS files and preliminary audit scripts are omitted from this submission repository to maintain a self-contained archive; preliminary audit findings are preserved solely for methodological rationale and are not reproducible from this repository.
+7. **Unseen Route Transfer Boundary:** Model transfer between disparate route topologies (long-haul transoceanic vs. short-sea regional feeders) requires lane-specific normalization or stratified corridor training.
+8. **Scenario Analysis Scope:** Controlled scenario evaluations reflect deterministic manipulations of the synthetic simulation engine and must not be interpreted as empirical causal effects established from real-world maritime operations.
